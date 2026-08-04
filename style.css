@@ -423,6 +423,7 @@ body {
 }
 
 .modal-large { max-width: 700px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+.modal-xlarge { max-width: 950px; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; }
 
 .modal-header {
   display: flex;
@@ -480,6 +481,211 @@ body {
   word-break: break-all;
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* ============ 分区管理 ============ */
+
+/* 分区汇总栏 */
+.partition-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: var(--bg);
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.partition-summary .sum-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.partition-summary .sum-label { color: var(--text-secondary); }
+.partition-summary .sum-value { font-weight: 700; color: var(--primary); font-variant-numeric: tabular-nums; }
+
+/* 分区 Tab 切换 */
+.partition-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 2px solid var(--border);
+}
+
+.ptab-btn {
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.2s;
+}
+
+.ptab-btn:hover { color: var(--primary); }
+.ptab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.ptab-content { display: none; }
+.ptab-content.active { display: block; }
+
+/* 分区工具栏 */
+.partition-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.partition-toolbar .search-input { width: 240px; }
+
+/* 分区表格 */
+.partition-table th, .partition-table td { font-size: 13px; }
+.partition-table .partition-name { font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }
+
+/* 粘贴模式 */
+.paste-guide {
+  background: var(--bg);
+  padding: 16px;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.paste-guide p { margin-bottom: 10px; }
+
+.paste-examples { display: flex; flex-direction: column; gap: 6px; }
+
+.paste-example { display: flex; align-items: baseline; gap: 8px; }
+
+.paste-label { color: var(--text-secondary); white-space: nowrap; min-width: 150px; }
+
+.paste-example code {
+  background: var(--card-bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  color: var(--primary);
+  border: 1px solid var(--border);
+}
+
+.paste-textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  color: var(--text);
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.paste-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.paste-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.paste-mode-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.paste-mode-label select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  color: var(--text);
+}
+
+/* 分区数量按钮 */
+.partition-count-btn {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--primary-light);
+  color: var(--primary);
+  transition: all 0.15s;
+}
+.partition-count-btn:hover { background: var(--primary); color: white; }
+.partition-count-btn.zero { background: var(--bg); color: var(--text-light); }
+
+/* 详情页分区展示 */
+.detail-partition-section { margin-bottom: 20px; }
+.detail-partition-section h3 {
+  font-size: 14px;
+  color: var(--primary);
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.detail-partition-section h3 .export-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 10px;
+}
+
+.detail-partition-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.detail-partition-table th {
+  background: var(--bg);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--border);
+}
+
+.detail-partition-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-partition-table .num-col { text-align: right; font-variant-numeric: tabular-nums; }
+.detail-partition-table .partition-name { font-family: "SF Mono", monospace; font-size: 12px; }
+
+.detail-partition-summary {
+  background: var(--bg);
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  margin-top: 8px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 /* ============ 响应式 ============ */
