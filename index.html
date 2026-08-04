@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>数据清洗记录管理工具</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Chart.js for statistics charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- ============ 顶部导航 ============ -->
+  <header class="app-header">
+    <div class="header-left">
+      <h1 class="app-title">🧹 数据清洗记录管理</h1>
+    </div>
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="list">📋 记录列表</button>
+      <button class="tab-btn" data-tab="stats">📊 统计报表</button>
+      <button class="tab-btn" data-tab="form">➕ 新建记录</button>
+    </nav>
+    <div class="header-right">
+      <span id="recordCount" class="record-count-badge">0 条记录</span>
+    </div>
+  </header>
+
+  <!-- ============ Tab 1: 记录列表 ============ -->
+  <section id="tab-list" class="tab-content active">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <input type="text" id="searchInput" class="search-input" placeholder="🔍 搜索任务名、表名、来源…">
+        <select id="filterStatus" class="filter-select">
+          <option value="">全部状态</option>
+          <option value="进行中">进行中</option>
+          <option value="已完成">已完成</option>
+          <option value="已归档">已归档</option>
+        </select>
+        <select id="filterOperator" class="filter-select">
+          <option value="">全部处理人</option>
+        </select>
+        <input type="date" id="filterDateFrom" class="filter-date" title="开始日期">
+        <span class="date-sep">~</span>
+        <input type="date" id="filterDateTo" class="filter-date" title="结束日期">
+        <button class="btn btn-sm btn-secondary" onclick="clearFilters()">清除筛选</button>
+      </div>
+      <div class="toolbar-right">
+        <button class="btn btn-primary" onclick="openFormTab()">+ 新建记录</button>
+        <button class="btn btn-secondary" onclick="exportCSV()">📥 导出CSV</button>
+        <button class="btn btn-secondary" onclick="exportExcel()">📊 导出Excel</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('importCSVInput').click()">📤 导入CSV</button>
+        <input type="file" id="importCSVInput" accept=".csv" style="display:none" onchange="importCSV(event)">
+      </div>
+    </div>
+
+    <!-- 记录表格 -->
+    <div class="table-container">
+      <table class="data-table" id="recordTable">
+        <thead>
+          <tr>
+            <th onclick="sortBy('taskName')" class="sortable">任务名称 ↕</th>
+            <th onclick="sortBy('createdAt')" class="sortable">日期 ↕</th>
+            <th>处理人</th>
+            <th>去重前表 → 去重后表</th>
+            <th class="num-col">去重前数量</th>
+            <th class="num-col">去重后数量</th>
+            <th class="num-col">重复率</th>
+            <th class="num-col">来源数</th>
+            <th>数据范围</th>
+            <th>OSS表</th>
+            <th>状态</th>
+            <th class="action-col">操作</th>
+          </tr>
+        </thead>
+        <tbody id="recordTableBody">
+          <!-- 动态渲染 -->
+        </tbody>
+      </table>
+      <div id="emptyState" class="empty-state" style="display:none;">
+        <div class="empty-icon">📭</div>
+        <p>暂无记录，点击「新建记录」开始</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Tab 2: 统计报表 ============ -->
+  <section id="tab-stats" class="tab-content">
+    <!-- 概览卡片 -->
+    <div class="stats-cards">
+      <div class="stat-card">
+        <div class="stat-icon">📋</div>
+        <div class="stat-info">
+          <div class="stat-value" id="statTotalTasks">0</div>
+          <div class="stat-label">总任务数</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📥</div>
+        <div class="stat-info">
+          <div class="stat-value" id="statTotalBefore">0</div>
+          <div class="stat-label">总去重前数据量</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📤</div>
+        <div class="stat-info">
+          <div class="stat-value" id="statTotalAfter">0</div>
+          <div class="stat-label">总去重后数据量</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📈</div>
+        <div class="stat-info">
+          <div class="stat-value" id="statAvgDupRate">0%</div>
+          <div class="stat-label">平均重复率</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图表区域 -->
+    <div class="chart-grid">
+      <div class="chart-card chart-wide">
+        <h3 class="chart-title">数据量趋势（按日期）</h3>
+        <canvas id="chartTrend"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3 class="chart-title">各任务重复率对比</h3>
+        <canvas id="chartDupRate"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3 class="chart-title">数据来源分布 Top 10</h3>
+        <canvas id="chartSources"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Tab 3: 新建/编辑表单 ============ -->
+  <section id="tab-form" class="tab-content">
+    <form id="recordForm" class="record-form" onsubmit="saveRecord(event)">
+      <input type="hidden" id="recordId">
+
+      <!-- 基本信息 -->
+      <fieldset class="form-section">
+        <legend>📌 基本信息</legend>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>任务名称 <span class="required">*</span></label>
+            <input type="text" id="taskName" required placeholder="如：6月增量数据去重">
+          </div>
+          <div class="form-group">
+            <label>处理人</label>
+            <input type="text" id="operator" placeholder="你的名字" list="operatorList">
+            <datalist id="operatorList"></datalist>
+          </div>
+          <div class="form-group">
+            <label>状态</label>
+            <select id="status">
+              <option value="进行中">进行中</option>
+              <option value="已完成">已完成</option>
+              <option value="已归档">已归档</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>创建时间</label>
+            <input type="text" id="createdAtDisplay" readonly placeholder="保存时自动生成">
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- 去重信息 -->
+      <fieldset class="form-section">
+        <legend>🔀 去重信息</legend>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>去重前表名</label>
+            <input type="text" id="beforeTable" placeholder="如：merged_incremental" list="tableNamesList">
+          </div>
+          <div class="form-group num-input-group">
+            <label>去重前数量</label>
+            <input type="number" id="beforeCount" placeholder="如：10000000" oninput="calcDup()">
+            <span class="formatted-hint" id="beforeCountHint"></span>
+          </div>
+          <div class="form-group">
+            <label>去重后表名</label>
+            <input type="text" id="afterTable" placeholder="如：merged_incremental_dedup" list="tableNamesList">
+          </div>
+          <div class="form-group num-input-group">
+            <label>去重后数量</label>
+            <input type="number" id="afterCount" placeholder="如：8500000" oninput="calcDup()">
+            <span class="formatted-hint" id="afterCountHint"></span>
+          </div>
+          <div class="form-group">
+            <label>去重规则（按哪些字段）</label>
+            <input type="text" id="dedupRules" placeholder="如：url, content 或 row_id">
+          </div>
+          <div class="form-group">
+            <label>重复数量（自动计算）</label>
+            <input type="text" id="dupCount" readonly placeholder="自动计算">
+          </div>
+          <div class="form-group">
+            <label>重复率（自动计算）</label>
+            <input type="text" id="dupRate" readonly placeholder="自动计算">
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- 数据来源（动态多个） -->
+      <fieldset class="form-section">
+        <legend>📦 数据来源（源表）</legend>
+        <div id="sourcesContainer" class="sources-container">
+          <!-- 动态添加 -->
+        </div>
+        <button type="button" class="btn btn-sm btn-add" onclick="addSourceField()">+ 添加源表</button>
+        <div class="form-group" style="margin-top:12px;">
+          <label>数据范围</label>
+          <input type="text" id="dataRange" placeholder="如：di='20260519' ~ '20260709'">
+        </div>
+      </fieldset>
+
+      <!-- OSS 信息 -->
+      <fieldset class="form-section">
+        <legend>☁️ OSS 存储信息</legend>
+        <div class="form-group">
+          <label>OSS 表名 / 路径</label>
+          <input type="text" id="ossTable" placeholder="如：oss://glm-data/dedup/merged_202607/">
+        </div>
+      </fieldset>
+
+      <!-- 附加信息 -->
+      <fieldset class="form-section">
+        <legend>📝 附加信息</legend>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>耗时（分钟）</label>
+            <input type="number" id="duration" placeholder="如：45">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>SQL 脚本</label>
+          <textarea id="sqlScript" class="sql-textarea" rows="8" placeholder="可粘贴完整的 SQL 语句…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>备注</label>
+          <textarea id="remark" rows="3" placeholder="其他需要记录的信息…"></textarea>
+        </div>
+      </fieldset>
+
+      <!-- 表名自动补全列表 -->
+      <datalist id="tableNamesList"></datalist>
+
+      <!-- 表单按钮 -->
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary btn-lg">💾 保存记录</button>
+        <button type="button" class="btn btn-secondary btn-lg" onclick="resetForm()">🔄 清空表单</button>
+        <button type="button" class="btn btn-secondary btn-lg" onclick="switchTab('list')">↩ 返回列表</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ============ 确认弹窗 ============ -->
+  <div id="confirmModal" class="modal-overlay" style="display:none;">
+    <div class="modal">
+      <p id="confirmMessage">确认操作？</p>
+      <div class="modal-actions">
+        <button class="btn btn-danger" id="confirmYesBtn">确认</button>
+        <button class="btn btn-secondary" onclick="closeConfirm()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 记录详情弹窗 ============ -->
+  <div id="detailModal" class="modal-overlay" style="display:none;">
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h2 id="detailTitle">记录详情</h2>
+        <button class="modal-close" onclick="closeDetail()">✕</button>
+      </div>
+      <div class="modal-body" id="detailBody"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
