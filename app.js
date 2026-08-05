@@ -1019,60 +1019,57 @@ function deletePartition(index) {
 // ============================================================
 
 /**
+ * 清理数字字符串：去掉千分位逗号、空格、单位等，只保留数字
+ * "2,939,500,888" → "2939500888"
+ * "6.11 TB" → "6.11"（但这是大小不是行数，由调用方判断）
+ */
+function cleanNumber(str) {
+  if (!str) return '';
+  // 去掉千分位逗号（数字间的逗号）
+  let s = str.replace(/(\d),(?=\d{3})/g, '$1');
+  // 提取第一个数字部分
+  const match = s.match(/[\d,]+(\.\d+)?/);
+  return match ? match[0].replace(/,/g, '') : '';
+}
+
+/**
+ * 判断字符串是否为数字（含千分位）
+ */
+function isNumericLike(str) {
+  if (!str) return false;
+  const cleaned = str.replace(/,/g, '').trim();
+  return /^\d+(\.\d+)?$/.test(cleaned);
+}
+
+/**
  * 解析粘贴的文本，智能识别格式
- * 支持列数：2列（分区+数量，before=after）、3列（分区+前+后）
- * 自动识别分隔符：Tab / 逗号 / 多空格
- * 自动跳过表头行
+ * 支持三种格式：
+ * 1. 横排多列（TSV/CSV/空格）：每行一条，列 = 分区名 + 数量(+数量)
+ * 2. 竖排多行：每 N 行一条（分区名/数量/大小/时间/时间 各占一行）
+ * 3. 混合格式
  */
 function parseAndImportPartitions() {
   const text = document.getElementById('partitionPasteArea').value.trim();
   if (!text) { showToast('⚠️ 请先粘贴数据'); return; }
 
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
   if (lines.length === 0) { showToast('⚠️ 没有有效数据'); return; }
 
-  // 识别分隔符：检查第一行
+  // 判断是横排还是竖排：
+  // 横排 = 第一行能通过 tab/逗号/多空格 拆出多列且第二列是数字
+  // 竖排 = 第一行是分区名（如 lang=xxx 或 di=xxx），第二行是数字
   const firstLine = lines[0];
-  let delimiter;
-  if (firstLine.includes('\t')) {
-    delimiter = 'tab';
-  } else if (firstLine.includes(',')) {
-    delimiter = 'comma';
-  } else {
-    delimiter = 'space';  // 多空格
-  }
+  const isHorizontal = checkHorizontalFormat(firstLine);
 
-  const parsed = [];
+  let parsed = [];
   let skippedHeader = false;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-
-    let cols;
-    if (delimiter === 'tab') {
-      cols = line.split('\t');
-    } else if (delimiter === 'comma') {
-      cols = line.split(',');
-    } else {
-      cols = line.split(/\s+/);
-    }
-    cols = cols.map(c => c.trim()).filter(c => c !== '');
-
-    if (cols.length < 2) continue;
-
-    // 检测并跳过表头（第二或第三列不是数字）
-    if (i === 0 && isNaN(Number(cols[1]))) {
-      skippedHeader = true;
-      continue;
-    }
-
-    const partition = cols[0];
-    const beforeCount = cols[1];
-    // 如果有第三列用第三列作为 afterCount，否则 after = before
-    const afterCount = cols.length >= 3 ? cols[2] : cols[1];
-
-    parsed.push({ partition, beforeCount, afterCount });
+  if (isHorizontal) {
+    const result = parseHorizontalFormat(lines);
+    parsed = result.parsed;
+    skippedHeader = result.skippedHeader;
+  } else {
+    parsed = parseVerticalFormat(lines);
   }
 
   if (parsed.length === 0) {
@@ -1097,6 +1094,114 @@ function parseAndImportPartitions() {
 
   const headerNote = skippedHeader ? '（已跳过表头）' : '';
   showToast(`✅ 成功导入 ${parsed.length} 个分区${headerNote}`);
+}
+
+/**
+ * 检测第一行是否为横排多列格式
+ */
+function checkHorizontalFormat(line) {
+  // 包含 Tab 或逗号，且拆分后至少 2 列
+  if (line.includes('\t')) {
+    const cols = line.split('\t').filter(c => c.trim());
+    return cols.length >= 2;
+  }
+  // 注意：逗号可能是千分位（如 2,939,500,888），需要检查拆分后第二列是否为数字
+  if (line.includes(',')) {
+    const cols = line.split(',').map(c => c.trim());
+    // 如果只有一列（逗号是千分位），不是真正的 CSV
+    // 如果多列且第二列是数字，可能是 CSV
+    if (cols.length >= 2 && isNumericLike(cols[1])) return true;
+    if (cols.length >= 3 && isNumericLike(cols[2])) return true;
+    return false;
+  }
+  // 多空格分隔（如 "di=20260519  5000000  4200000"）
+  if (/\s{2,}/.test(line) || (/=/.test(line) && /\s/.test(line))) {
+    const cols = line.split(/\s+/).filter(c => c);
+    return cols.length >= 2;
+  }
+  return false;
+}
+
+/**
+ * 解析横排格式：每行一条记录
+ */
+function parseHorizontalFormat(lines) {
+  const parsed = [];
+  let skippedHeader = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+
+    // 智能拆列
+    let cols;
+    if (line.includes('\t')) {
+      cols = line.split('\t');
+    } else if (line.includes(',') && isNumericLike(line.split(',')[1])) {
+      cols = line.split(',');
+    } else {
+      cols = line.split(/\s+/);
+    }
+    cols = cols.map(c => c.trim()).filter(c => c !== '');
+
+    if (cols.length < 2) continue;
+
+    // 跳过表头（第二列不是数字）
+    if (i === 0 && !isNumericLike(cols[1])) {
+      skippedHeader = true;
+      continue;
+    }
+
+    const partition = cols[0];
+    const beforeCount = cleanNumber(cols[1]);
+    // 第三列如果存在且是数字，作为 afterCount；否则 after = before
+    let afterCount = beforeCount;
+    if (cols.length >= 3 && isNumericLike(cols[2])) {
+      afterCount = cleanNumber(cols[2]);
+    }
+
+    parsed.push({ partition, beforeCount, afterCount });
+  }
+  return { parsed, skippedHeader };
+}
+
+/**
+ * 解析竖排格式：每 N 行一条记录
+ * 典型场景：从 MaxCompute 表格视图复制，每个字段占一行
+ * 格式：分区名 / 数量 / 大小 / 时间 / 时间 （重复）
+ */
+function parseVerticalFormat(lines) {
+  const parsed = [];
+
+  // 策略：识别以 xxx= 开头的行为「分区名」行，
+  // 紧跟其后的第一个数字行为「数量」
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // 匹配分区名模式：xxx=yyy（如 lang=vie_Latn, di=20260519, dt=202606）
+    if (/^\w+=.+/.test(line)) {
+      const partition = line.trim();
+
+      // 向后查找最近的数字行（跳过大小、时间等非纯数字行）
+      let count = '';
+      for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+        const nextLine = lines[j].trim();
+        // 遇到下一个分区名就停
+        if (/^\w+=.+/.test(nextLine)) break;
+        // 找到纯数字行（含千分位）
+        if (isNumericLike(nextLine)) {
+          count = cleanNumber(nextLine);
+          break;
+        }
+      }
+
+      if (count) {
+        // 竖排格式通常只有「数量」，没有去重前后之分，所以 before = after
+        parsed.push({ partition, beforeCount: count, afterCount: count });
+      }
+    }
+  }
+  return parsed;
 }
 
 // ============================================================

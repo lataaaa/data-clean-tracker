@@ -329,27 +329,28 @@
         <!-- 粘贴模式 -->
         <div id="partitionPasteMode" class="ptab-content">
           <div class="paste-guide">
-            <p>📋 <strong>将查询结果粘贴到下方文本框</strong>，支持以下格式（自动识别）：</p>
+            <p>📋 <strong>将查询结果粘贴到下方文本框</strong>，自动识别以下格式：</p>
             <div class="paste-examples">
               <div class="paste-example">
-                <span class="paste-label">TSV（控制台复制）：</span>
+                <span class="paste-label">竖排（表格复制）：</span>
+                <code>lang=vie_Latn&nbsp;&nbsp;↵&nbsp;2,939,500,888&nbsp;&nbsp;↵&nbsp;6.11TB&nbsp;…</code>
+                <span style="color:var(--success);font-size:12px;">✓ 自动跳过大小/时间</span>
+              </div>
+              <div class="paste-example">
+                <span class="paste-label">横排TSV：</span>
                 <code>di=20260519&nbsp;&nbsp;5000000&nbsp;&nbsp;4200000</code>
               </div>
               <div class="paste-example">
-                <span class="paste-label">CSV：</span>
+                <span class="paste-label">横排CSV：</span>
                 <code>di=20260519,5000000,4200000</code>
               </div>
               <div class="paste-example">
-                <span class="paste-label">带表头（自动跳过）：</span>
-                <code>partition&nbsp;&nbsp;before&nbsp;&nbsp;after</code>
-              </div>
-              <div class="paste-example">
-                <span class="paste-label">只有两列（自动 before=after）：</span>
-                <code>di=20260519&nbsp;&nbsp;5000000</code>
+                <span class="paste-label">只有数量（自动 before=after）：</span>
+                <code>lang=kor_Hang&nbsp;&nbsp;3,178,599,404</code>
               </div>
             </div>
           </div>
-          <textarea id="partitionPasteArea" class="paste-textarea" rows="12" placeholder="在此粘贴查询结果…&#10;每行一个分区：分区名  去重前数量  去重后数量&#10;支持 Tab、逗号、空格分隔"></textarea>
+          <textarea id="partitionPasteArea" class="paste-textarea" rows="12" placeholder="在此粘贴查询结果…&#10;&#10;支持两种格式：&#10;1. 竖排（从表格复制的多行数据，自动识别 xxx= 分区名）&#10;2. 横排（每行一条：分区名 数量1 数量2）&#10;&#10;千分位逗号、数据大小、时间等会自动忽略"></textarea>
           <div class="paste-actions">
             <label class="paste-mode-label">
               导入方式：
