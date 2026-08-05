@@ -485,6 +485,89 @@ body {
 
 /* ============ 分区管理 ============ */
 
+/* 动态去重字段（主记录表单） */
+.dedup-fields-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 16px 0 8px;
+}
+
+.dedup-fields-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dedup-columns-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dedup-col-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 36px;
+  gap: 8px;
+  align-items: center;
+}
+
+.dedup-col-row .dedup-col-name {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: text;
+}
+
+.dedup-col-row .dedup-col-name:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--card-bg);
+}
+
+.dedup-col-row .dedup-col-value {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.dedup-col-row .dedup-col-value:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.dedup-col-remove {
+  padding: 6px 10px;
+  border: none;
+  background: #fee2e2;
+  color: var(--danger);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 16px;
+}
+.dedup-col-remove:hover { background: var(--danger); color: white; }
+
+.dedup-total-rate {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: right;
+  min-height: 20px;
+}
+
+.dedup-total-rate .rate-value {
+  font-weight: 700;
+  font-size: 15px;
+}
+
 /* 分区汇总栏 */
 .partition-summary {
   display: flex;

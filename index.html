@@ -57,23 +57,7 @@
     <!-- 记录表格 -->
     <div class="table-container">
       <table class="data-table" id="recordTable">
-        <thead>
-          <tr>
-            <th onclick="sortBy('taskName')" class="sortable">任务名称 ↕</th>
-            <th onclick="sortBy('createdAt')" class="sortable">日期 ↕</th>
-            <th>处理人</th>
-            <th>去重前表 → 去重后表</th>
-            <th class="num-col">去重前数量</th>
-            <th class="num-col">去重后数量</th>
-            <th class="num-col">重复率</th>
-            <th class="num-col">来源数</th>
-            <th class="num-col">分区</th>
-            <th>数据范围</th>
-            <th>OSS表</th>
-            <th>状态</th>
-            <th class="action-col">操作</th>
-          </tr>
-        </thead>
+        <thead id="recordTableHead"></thead>
         <tbody id="recordTableBody">
           <!-- 动态渲染 -->
         </tbody>
@@ -174,36 +158,24 @@
         <legend>🔀 去重信息</legend>
         <div class="form-grid">
           <div class="form-group">
-            <label>去重前表名</label>
+            <label>去重前表</label>
             <input type="text" id="beforeTable" placeholder="如：merged_incremental" list="tableNamesList">
           </div>
-          <div class="form-group num-input-group">
-            <label>去重前数量</label>
-            <input type="number" id="beforeCount" placeholder="如：10000000" oninput="calcDup()">
-            <span class="formatted-hint" id="beforeCountHint"></span>
-          </div>
           <div class="form-group">
-            <label>去重后表名</label>
-            <input type="text" id="afterTable" placeholder="如：merged_incremental_dedup" list="tableNamesList">
-          </div>
-          <div class="form-group num-input-group">
-            <label>去重后数量</label>
-            <input type="number" id="afterCount" placeholder="如：8500000" oninput="calcDup()">
-            <span class="formatted-hint" id="afterCountHint"></span>
-          </div>
-          <div class="form-group">
-            <label>去重规则（按哪些字段）</label>
-            <input type="text" id="dedupRules" placeholder="如：url, content 或 row_id">
-          </div>
-          <div class="form-group">
-            <label>重复数量（自动计算）</label>
-            <input type="text" id="dupCount" readonly placeholder="自动计算">
-          </div>
-          <div class="form-group">
-            <label>重复率（自动计算）</label>
-            <input type="text" id="dupRate" readonly placeholder="自动计算">
+            <label>去重后表</label>
+            <input type="text" id="afterTable" placeholder="如：merged_mh_dedup" list="tableNamesList">
           </div>
         </div>
+
+        <!-- 动态去重数量列 -->
+        <div class="dedup-fields-header">
+          <span class="dedup-fields-title">📊 去重阶段数量</span>
+          <button type="button" class="btn btn-sm btn-add" onclick="addDedupColumn()">+ 添加数量列</button>
+        </div>
+        <div id="dedupColumnsContainer" class="dedup-columns-container">
+          <!-- 动态生成 -->
+        </div>
+        <div class="dedup-total-rate" id="formDedupTotalRate"></div>
       </fieldset>
 
       <!-- 数据来源（动态多个） -->

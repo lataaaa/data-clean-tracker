@@ -82,6 +82,77 @@ function calcDupStats(before, after) {
 }
 
 // ============================================================
+// 主记录去重列管理
+// ============================================================
+
+/** 生成去重列 ID */
+function genDedupColId() {
+  return 'd_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+}
+
+/** 迁移旧记录：beforeCount/afterCount → dedupColumns/dedupValues */
+function migrateRecordDedupColumns(record) {
+  if (record.dedupColumns && record.dedupColumns.length > 0) return;
+  const col1 = 'd_mig_1', col2 = 'd_mig_2';
+  record.dedupColumns = [
+    { id: col1, name: '去重前数量' },
+    { id: col2, name: '去重后数量' },
+  ];
+  record.dedupValues = {};
+  record.dedupValues[col1] = record.beforeCount || '';
+  record.dedupValues[col2] = record.afterCount || '';
+}
+
+/** 获取所有记录中去重列名的并集（用于列表动态列） */
+function getAllDedupColumns() {
+  const colMap = {}; // name → id
+  records.forEach(r => {
+    if (!r.dedupColumns) return;
+    r.dedupColumns.forEach(c => { colMap[c.name] = c.id; });
+  });
+  return Object.entries(colMap).map(([name, id]) => ({ id, name }));
+}
+
+/** 计算单条记录的总去重率（第一列→最后一列） */
+function calcRecordTotalRate(record) {
+  if (!record.dedupColumns || record.dedupColumns.length < 2) return '';
+  const cols = record.dedupColumns;
+  const vals = record.dedupValues || {};
+  const first = Number(vals[cols[0].id]) || 0;
+  const last = Number(vals[cols[cols.length - 1].id]) || 0;
+  if (first <= 0) return '';
+  return (((first - last) / first) * 100).toFixed(2);
+}
+
+/** 表单中添加去重列行 */
+function addDedupColumn(name = '', value = '') {
+  const container = document.getElementById('dedupColumnsContainer');
+  const colId = genDedupColId();
+  const row = document.createElement('div');
+  row.className = 'dedup-col-row';
+  row.dataset.colid = colId;
+  row.innerHTML = `
+    <input type="text" class="dedup-col-name" placeholder="列名，如：精确去重后数量" value="${esc(name)}">
+    <input type="number" class="dedup-col-value" placeholder="数量，如：42000000" value="${esc(value)}" oninput="updateFormDedupRate()">
+    <button type="button" class="dedup-col-remove" onclick="this.parentElement.remove(); updateFormDedupRate()">✕</button>
+  `;
+  container.appendChild(row);
+}
+
+/** 表单中更新总去重率 */
+function updateFormDedupRate() {
+  const rows = document.querySelectorAll('.dedup-col-row');
+  if (rows.length < 2) { document.getElementById('formDedupTotalRate').innerHTML = ''; return; }
+  const first = Number(rows[0].querySelector('.dedup-col-value').value) || 0;
+  const last = Number(rows[rows.length - 1].querySelector('.dedup-col-value').value) || 0;
+  const rateEl = document.getElementById('formDedupTotalRate');
+  if (first <= 0) { rateEl.innerHTML = ''; return; }
+  const rate = (((first - last) / first) * 100).toFixed(2);
+  const dupCount = first - last;
+  rateEl.innerHTML = `总去重率：<span class="rate-value ${getDupRateClass(Number(rate))}">${rate}%</span> <span style="color:var(--text-light)">(去重 ${formatNum(dupCount)})</span>`;
+}
+
+// ============================================================
 // Tab 切换
 // ============================================================
 
@@ -134,8 +205,8 @@ function getFilteredRecords() {
   }).sort((a, b) => {
     let va = a[sortField] || '';
     let vb = b[sortField] || '';
-    // 数值字段
-    if (sortField === 'beforeCount' || sortField === 'afterCount') {
+    // 数值字段（动态去重列按数值排序）
+    if (sortField.startsWith('d_') || sortField.startsWith('d_mig')) {
       va = Number(va) || 0;
       vb = Number(vb) || 0;
     }
@@ -148,13 +219,22 @@ function getFilteredRecords() {
 function renderTable() {
   const filtered = getFilteredRecords();
   const tbody = document.getElementById('recordTableBody');
+  const thead = document.getElementById('recordTableHead');
   const emptyState = document.getElementById('emptyState');
   const table = document.getElementById('recordTable');
 
   document.getElementById('recordCount').textContent = `${records.length} 条记录`;
 
+  // 获取全局去重列并集（用于动态列表头）
+  const allDedupCols = getAllDedupColumns();
+  const hasDedupCols = allDedupCols.length > 0;
+
+  // 迁移所有记录
+  records.forEach(r => migrateRecordDedupColumns(r));
+
   if (filtered.length === 0) {
     tbody.innerHTML = '';
+    thead.innerHTML = '';
     table.style.display = 'none';
     emptyState.style.display = 'block';
     return;
@@ -163,12 +243,37 @@ function renderTable() {
   table.style.display = '';
   emptyState.style.display = 'none';
 
+  // 动态表头
+  thead.innerHTML = `<tr>
+    <th onclick="sortBy('taskName')" class="sortable">任务名称 ↕</th>
+    <th onclick="sortBy('createdAt')" class="sortable">日期 ↕</th>
+    <th>处理人</th>
+    <th>去重前表 → 去重后表</th>
+    ${allDedupCols.map(c => `<th class="num-col">${esc(c.name)}</th>`).join('')}
+    ${hasDedupCols ? '<th class="num-col">总去重率</th>' : ''}
+    <th class="num-col">来源</th>
+    <th class="num-col">分区</th>
+    <th>数据范围</th>
+    <th>OSS表</th>
+    <th>状态</th>
+    <th class="action-col">操作</th>
+  </tr>`;
+
   tbody.innerHTML = filtered.map(r => {
-    const { dupCount, dupRate } = calcDupStats(r.beforeCount, r.afterCount);
+    migrateRecordDedupColumns(r);
+    const totalRate = calcRecordTotalRate(r);
+    const totalRateDisplay = totalRate !== '' ? `${totalRate}%` : '-';
     const sourceCount = (r.beforeSources || []).filter(s => s.trim()).length;
     const partitionCount = (r.partitions || []).length;
-    const dupRateDisplay = dupRate !== '' ? `${dupRate}%` : '-';
-    const dupRateClass = getDupRateClass(Number(dupRate));
+    const values = r.dedupValues || {};
+
+    // 为每个全局列找到该记录中匹配的值（按列名匹配）
+    const dedupCells = allDedupCols.map(gc => {
+      // 在该记录的列中查找同名列
+      const localCol = (r.dedupColumns || []).find(lc => lc.name === gc.name);
+      const val = localCol ? values[localCol.id] : '';
+      return `<td class="num-col">${val ? formatNum(val) : '-'}</td>`;
+    }).join('');
 
     return `
       <tr ondblclick="viewDetail('${r.id}')">
@@ -182,9 +287,8 @@ function renderTable() {
             ${esc(r.afterTable || '-')}
           </span>
         </td>
-        <td class="num-col">${r.beforeCount ? formatNum(r.beforeCount) : '-'}</td>
-        <td class="num-col">${r.afterCount ? formatNum(r.afterCount) : '-'}</td>
-        <td class="num-col"><span class="${dupRateClass}">${dupRateDisplay}</span></td>
+        ${dedupCells}
+        ${hasDedupCols ? `<td class="num-col"><span class="${getDupRateClass(Number(totalRate))}">${totalRateDisplay}</span></td>` : ''}
         <td class="num-col">${sourceCount || '-'}</td>
         <td class="num-col">
           <button class="partition-count-btn ${partitionCount === 0 ? 'zero' : ''}" onclick="openPartitionManager('${r.id}')" title="管理分区">
@@ -239,13 +343,13 @@ function resetForm() {
   document.getElementById('recordForm').reset();
   document.getElementById('recordId').value = '';
   document.getElementById('createdAtDisplay').value = '';
-  document.getElementById('dupCount').value = '';
-  document.getElementById('dupRate').value = '';
-  document.getElementById('beforeCountHint').textContent = '';
-  document.getElementById('afterCountHint').textContent = '';
-  // 重置源表为一个空行
   document.getElementById('sourcesContainer').innerHTML = '';
   addSourceField('');
+  // 重置去重列为默认两列
+  document.getElementById('dedupColumnsContainer').innerHTML = '';
+  addDedupColumn('去重前数量', '');
+  addDedupColumn('去重后数量', '');
+  updateFormDedupRate();
 }
 
 /** 添加源表输入行 */
@@ -258,20 +362,6 @@ function addSourceField(value = '') {
     <button type="button" class="source-remove" onclick="this.parentElement.remove()">✕</button>
   `;
   container.appendChild(row);
-}
-
-/** 实时计算重复数量和重复率 */
-function calcDup() {
-  const before = document.getElementById('beforeCount').value;
-  const after = document.getElementById('afterCount').value;
-
-  // 显示格式化的数字提示
-  document.getElementById('beforeCountHint').textContent = before ? `≈ ${formatNum(before)}` : '';
-  document.getElementById('afterCountHint').textContent = after ? `≈ ${formatNum(after)}` : '';
-
-  const { dupCount, dupRate } = calcDupStats(before, after);
-  document.getElementById('dupCount').value = dupCount !== '' ? formatNum(dupCount) : '';
-  document.getElementById('dupRate').value = dupRate !== '' ? `${dupRate}%` : '';
 }
 
 /** 保存记录 */
@@ -287,9 +377,18 @@ function saveRecord(event) {
     if (input.value.trim()) sources.push(input.value.trim());
   });
 
-  const before = document.getElementById('beforeCount').value;
-  const after = document.getElementById('afterCount').value;
-  const { dupCount, dupRate } = calcDupStats(before, after);
+  // 收集动态去重列
+  const dedupColumns = [];
+  const dedupValues = {};
+  document.querySelectorAll('.dedup-col-row').forEach(row => {
+    const colId = row.dataset.colid;
+    const name = row.querySelector('.dedup-col-name').value.trim();
+    const value = row.querySelector('.dedup-col-value').value.trim();
+    if (name || value) {
+      dedupColumns.push({ id: colId, name: name || '未命名' });
+      dedupValues[colId] = value;
+    }
+  });
 
   const record = {
     id: id || genId(),
@@ -298,13 +397,10 @@ function saveRecord(event) {
     operator: document.getElementById('operator').value.trim(),
     status: document.getElementById('status').value,
     beforeTable: document.getElementById('beforeTable').value.trim(),
-    beforeCount: before,
     beforeSources: sources,
     afterTable: document.getElementById('afterTable').value.trim(),
-    afterCount: after,
-    dedupRules: document.getElementById('dedupRules').value.trim(),
-    dupCount: dupCount,
-    dupRate: dupRate,
+    dedupColumns,
+    dedupValues,
     dataRange: document.getElementById('dataRange').value.trim(),
     ossTable: document.getElementById('ossTable').value.trim(),
     sqlScript: document.getElementById('sqlScript').value.trim(),
@@ -317,7 +413,6 @@ function saveRecord(event) {
   } else {
     const idx = records.findIndex(r => r.id === id);
     if (idx >= 0) {
-      // 编辑时保留原有分区数据
       record.partitions = records[idx].partitions || [];
       record.partitionColumns = records[idx].partitionColumns || [];
       records[idx] = record;
@@ -334,6 +429,7 @@ function saveRecord(event) {
 function editRecord(id) {
   const r = records.find(x => x.id === id);
   if (!r) return;
+  migrateRecordDedupColumns(r);
 
   document.getElementById('recordId').value = r.id;
   document.getElementById('taskName').value = r.taskName || '';
@@ -341,10 +437,7 @@ function editRecord(id) {
   document.getElementById('operator').value = r.operator || '';
   document.getElementById('status').value = r.status || '进行中';
   document.getElementById('beforeTable').value = r.beforeTable || '';
-  document.getElementById('beforeCount').value = r.beforeCount || '';
   document.getElementById('afterTable').value = r.afterTable || '';
-  document.getElementById('afterCount').value = r.afterCount || '';
-  document.getElementById('dedupRules').value = r.dedupRules || '';
   document.getElementById('dataRange').value = r.dataRange || '';
   document.getElementById('ossTable').value = r.ossTable || '';
   document.getElementById('sqlScript').value = r.sqlScript || '';
@@ -359,7 +452,18 @@ function editRecord(id) {
     addSourceField('');
   }
 
-  calcDup();
+  // 动态去重列
+  document.getElementById('dedupColumnsContainer').innerHTML = '';
+  if (r.dedupColumns && r.dedupColumns.length > 0) {
+    r.dedupColumns.forEach(c => {
+      addDedupColumn(c.name, (r.dedupValues || {})[c.id] || '');
+    });
+  } else {
+    addDedupColumn('去重前数量', '');
+    addDedupColumn('去重后数量', '');
+  }
+  updateFormDedupRate();
+
   switchTab('form');
 }
 
@@ -367,18 +471,15 @@ function editRecord(id) {
 function copyNew(id) {
   const r = records.find(x => x.id === id);
   if (!r) return;
+  migrateRecordDedupColumns(r);
 
-  // 预填字段，但清空 id
   document.getElementById('recordId').value = '';
   document.getElementById('taskName').value = r.taskName ? r.taskName + ' (副本)' : '';
   document.getElementById('createdAtDisplay').value = '';
   document.getElementById('operator').value = r.operator || '';
   document.getElementById('status').value = '进行中';
   document.getElementById('beforeTable').value = r.beforeTable || '';
-  document.getElementById('beforeCount').value = r.beforeCount || '';
   document.getElementById('afterTable').value = r.afterTable || '';
-  document.getElementById('afterCount').value = r.afterCount || '';
-  document.getElementById('dedupRules').value = r.dedupRules || '';
   document.getElementById('dataRange').value = r.dataRange || '';
   document.getElementById('ossTable').value = r.ossTable || '';
   document.getElementById('sqlScript').value = r.sqlScript || '';
@@ -391,6 +492,18 @@ function copyNew(id) {
   } else {
     addSourceField('');
   }
+
+  // 动态去重列
+  document.getElementById('dedupColumnsContainer').innerHTML = '';
+  if (r.dedupColumns && r.dedupColumns.length > 0) {
+    r.dedupColumns.forEach(c => {
+      addDedupColumn(c.name, (r.dedupValues || {})[c.id] || '');
+    });
+  } else {
+    addDedupColumn('去重前数量', '');
+    addDedupColumn('去重后数量', '');
+  }
+  updateFormDedupRate();
 
   calcDup();
   switchTab('form');
@@ -416,8 +529,34 @@ function deleteRecord(id) {
 function viewDetail(id) {
   const r = records.find(x => x.id === id);
   if (!r) return;
-  const { dupCount, dupRate } = calcDupStats(r.beforeCount, r.afterCount);
+  migrateRecordDedupColumns(r);
+  const totalRate = calcRecordTotalRate(r);
   const sources = (r.beforeSources || []).filter(s => s.trim());
+  const values = r.dedupValues || {};
+  const cols = r.dedupColumns || [];
+
+  // 构建去重阶段展示
+  const dedupStageRows = cols.map(c => {
+    const val = values[c.id] || '';
+    return `<div class="detail-row"><span class="label">${esc(c.name)}</span><span class="value">${val ? formatNum(val) : '-'}</span></div>`;
+  }).join('');
+
+  // 阶段间去重率
+  let stageRatesHtml = '';
+  if (cols.length >= 2) {
+    const stages = [];
+    for (let i = 1; i < cols.length; i++) {
+      const prev = Number(values[cols[i-1].id]) || 0;
+      const curr = Number(values[cols[i].id]) || 0;
+      if (prev > 0) {
+        const rate = ((prev - curr) / prev * 100).toFixed(2);
+        stages.push(`${esc(cols[i-1].name)} → ${esc(cols[i].name)}：<strong>${rate}%</strong>`);
+      }
+    }
+    if (stages.length > 0) {
+      stageRatesHtml = `<div class="detail-row"><span class="label">阶段去重率</span><span class="value" style="font-size:13px;">${stages.join('；<br>')}</span></div>`;
+    }
+  }
 
   document.getElementById('detailTitle').textContent = r.taskName;
   document.getElementById('detailBody').innerHTML = `
@@ -430,13 +569,11 @@ function viewDetail(id) {
     </div>
     <div class="detail-section">
       <h3>🔀 去重信息</h3>
-      <div class="detail-row"><span class="label">去重前表名</span><span class="value">${esc(r.beforeTable || '-')}</span></div>
-      <div class="detail-row"><span class="label">去重前数量</span><span class="value">${r.beforeCount ? formatNum(r.beforeCount) : '-'}</span></div>
-      <div class="detail-row"><span class="label">去重后表名</span><span class="value">${esc(r.afterTable || '-')}</span></div>
-      <div class="detail-row"><span class="label">去重后数量</span><span class="value">${r.afterCount ? formatNum(r.afterCount) : '-'}</span></div>
-      <div class="detail-row"><span class="label">去重规则</span><span class="value">${esc(r.dedupRules || '-')}</span></div>
-      <div class="detail-row"><span class="label">重复数量</span><span class="value">${dupCount !== '' ? formatNum(dupCount) : '-'}</span></div>
-      <div class="detail-row"><span class="label">重复率</span><span class="value"><span class="${getDupRateClass(Number(dupRate))}">${dupRate !== '' ? dupRate + '%' : '-'}</span></span></div>
+      <div class="detail-row"><span class="label">去重前表</span><span class="value">${esc(r.beforeTable || '-')}</span></div>
+      <div class="detail-row"><span class="label">去重后表</span><span class="value">${esc(r.afterTable || '-')}</span></div>
+      ${dedupStageRows}
+      ${stageRatesHtml}
+      ${totalRate !== '' ? `<div class="detail-row"><span class="label">总去重率</span><span class="value"><span class="${getDupRateClass(Number(totalRate))}">${totalRate}%</span></span></div>` : ''}
     </div>
     <div class="detail-section">
       <h3>📦 数据来源 (${sources.length})</h3>
@@ -472,18 +609,28 @@ function closeDetail() {
 // ============================================================
 
 function renderStats() {
-  const validRecords = records.filter(r => r.beforeCount || r.afterCount);
+  records.forEach(r => migrateRecordDedupColumns(r));
+  const validRecords = records.filter(r => {
+    const rate = calcRecordTotalRate(r);
+    return rate !== '';
+  });
 
   // 概览卡片
   document.getElementById('statTotalTasks').textContent = records.length;
-  const totalBefore = validRecords.reduce((s, r) => s + (Number(r.beforeCount) || 0), 0);
-  const totalAfter = validRecords.reduce((s, r) => s + (Number(r.afterCount) || 0), 0);
+  const totalBefore = validRecords.reduce((s, r) => {
+    const cols = r.dedupColumns || [];
+    const vals = r.dedupValues || {};
+    return s + (Number(vals[cols[0]?.id]) || 0);
+  }, 0);
+  const totalAfter = validRecords.reduce((s, r) => {
+    const cols = r.dedupColumns || [];
+    const vals = r.dedupValues || {};
+    return s + (Number(vals[cols[cols.length - 1]?.id]) || 0);
+  }, 0);
   document.getElementById('statTotalBefore').textContent = formatNum(totalBefore);
   document.getElementById('statTotalAfter').textContent = formatNum(totalAfter);
 
-  const rates = validRecords
-    .map(r => Number(calcDupStats(r.beforeCount, r.afterCount).dupRate))
-    .filter(r => !isNaN(r));
+  const rates = validRecords.map(r => Number(calcRecordTotalRate(r))).filter(r => !isNaN(r));
   const avgRate = rates.length > 0 ? (rates.reduce((s, r) => s + r, 0) / rates.length).toFixed(2) : 0;
   document.getElementById('statAvgDupRate').textContent = avgRate + '%';
 
@@ -497,11 +644,18 @@ function renderTrendChart(validRecords) {
   const ctx = document.getElementById('chartTrend');
   if (charts.trend) charts.trend.destroy();
 
-  // 按日期排序
   const sorted = [...validRecords].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   const labels = sorted.map(r => formatDate(r.createdAt));
-  const beforeData = sorted.map(r => Number(r.beforeCount) || 0);
-  const afterData = sorted.map(r => Number(r.afterCount) || 0);
+  const beforeData = sorted.map(r => {
+    const cols = r.dedupColumns || [];
+    const vals = r.dedupValues || {};
+    return Number(vals[cols[0]?.id]) || 0;
+  });
+  const afterData = sorted.map(r => {
+    const cols = r.dedupColumns || [];
+    const vals = r.dedupValues || {};
+    return Number(vals[cols[cols.length - 1]?.id]) || 0;
+  });
 
   charts.trend = new Chart(ctx, {
     type: 'line',
@@ -526,9 +680,9 @@ function renderDupRateChart(validRecords) {
   const ctx = document.getElementById('chartDupRate');
   if (charts.dupRate) charts.dupRate.destroy();
 
-  const recent = [...validRecords].slice(-15);  // 最近15条
+  const recent = [...validRecords].slice(-15);
   const labels = recent.map(r => r.taskName ? (r.taskName.length > 12 ? r.taskName.slice(0,12)+'…' : r.taskName) : '-');
-  const data = recent.map(r => Number(calcDupStats(r.beforeCount, r.afterCount).dupRate) || 0);
+  const data = recent.map(r => Number(calcRecordTotalRate(r)) || 0);
   const colors = data.map(d => d >= 20 ? '#ef4444' : d >= 10 ? '#f59e0b' : '#22c55e');
 
   charts.dupRate = new Chart(ctx, {
@@ -585,25 +739,31 @@ function generateColors(n) {
 
 function exportCSV() {
   if (records.length === 0) { showToast('⚠️ 没有可导出的记录'); return; }
+  records.forEach(r => migrateRecordDedupColumns(r));
+  const allDedupCols = getAllDedupColumns();
 
-  const headers = ['任务名称','创建时间','处理人','状态','去重前表名','去重前数量','去重后表名','去重后数量','去重规则','重复数量','重复率','数据来源(分号分隔)','数据范围','OSS表','耗时(分钟)','SQL脚本','备注'];
+  const headers = ['任务名称','创建时间','处理人','状态','去重前表','去重后表', ...allDedupCols.map(c => c.name), '总去重率(%)','数据来源(分号分隔)','数据范围','OSS表','耗时(分钟)','SQL脚本','备注'];
 
   const rows = records.map(r => {
-    const { dupCount, dupRate } = calcDupStats(r.beforeCount, r.afterCount);
+    const values = r.dedupValues || {};
+    const totalRate = calcRecordTotalRate(r);
+    // 按全局列名匹配该记录的值
+    const dedupVals = allDedupCols.map(gc => {
+      const localCol = (r.dedupColumns || []).find(lc => lc.name === gc.name);
+      return localCol ? (values[localCol.id] || '') : '';
+    });
     return [
       r.taskName, formatDateTime(r.createdAt), r.operator, r.status,
-      r.beforeTable, r.beforeCount, r.afterTable, r.afterCount,
-      r.dedupRules, dupCount, dupRate,
+      r.beforeTable, r.afterTable,
+      ...dedupVals, totalRate,
       (r.beforeSources || []).join('; '),
       r.dataRange, r.ossTable, r.duration, r.sqlScript, r.remark
     ].map(v => {
       const s = String(v === null || v === undefined ? '' : v);
-      // CSV 转义：含逗号、引号、换行的用双引号包裹
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     }).join(',');
   });
 
-  // 添加 BOM 以支持 Excel 正确识别 UTF-8
   const csv = '\uFEFF' + headers.join(',') + '\n' + rows.join('\n');
   downloadFile(csv, `数据清洗记录_${formatDate(new Date().toISOString())}.csv`, 'text/csv;charset=utf-8');
   showToast(`📥 已导出 ${records.length} 条记录`);
@@ -611,15 +771,23 @@ function exportCSV() {
 
 function exportExcel() {
   if (records.length === 0) { showToast('⚠️ 没有可导出的记录'); return; }
+  records.forEach(r => migrateRecordDedupColumns(r));
+  const allDedupCols = getAllDedupColumns();
 
-  const headers = ['任务名称','创建时间','处理人','状态','去重前表名','去重前数量','去重后表名','去重后数量','去重规则','重复数量','重复率','数据来源','数据范围','OSS表','耗时(分钟)','SQL脚本','备注'];
+  const headers = ['任务名称','创建时间','处理人','状态','去重前表','去重后表', ...allDedupCols.map(c => c.name), '总去重率(%)','数据来源','数据范围','OSS表','耗时(分钟)','SQL脚本','备注'];
 
   const rows = records.map(r => {
-    const { dupCount, dupRate } = calcDupStats(r.beforeCount, r.afterCount);
+    const values = r.dedupValues || {};
+    const totalRate = calcRecordTotalRate(r);
+    const dedupCells = allDedupCols.map(gc => {
+      const localCol = (r.dedupColumns || []).find(lc => lc.name === gc.name);
+      return localCol ? (values[localCol.id] || '') : '';
+    });
     return `<tr>
       <td>${esc(r.taskName)}</td><td>${formatDateTime(r.createdAt)}</td><td>${esc(r.operator||'')}</td><td>${esc(r.status||'')}</td>
-      <td>${esc(r.beforeTable||'')}</td><td>${r.beforeCount||''}</td><td>${esc(r.afterTable||'')}</td><td>${r.afterCount||''}</td>
-      <td>${esc(r.dedupRules||'')}</td><td>${dupCount}</td><td>${dupRate}%</td>
+      <td>${esc(r.beforeTable||'')}</td><td>${esc(r.afterTable||'')}</td>
+      ${dedupCells.map(v => `<td>${esc(v)}</td>`).join('')}
+      <td>${totalRate}</td>
       <td>${esc((r.beforeSources||[]).join('; '))}</td><td>${esc(r.dataRange||'')}</td><td>${esc(r.ossTable||'')}</td>
       <td>${esc(r.duration||'')}</td><td>${esc(r.sqlScript||'')}</td><td>${esc(r.remark||'')}</td>
     </tr>`;
@@ -627,7 +795,7 @@ function exportExcel() {
 
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
     <head><meta charset="UTF-8"></head>
-    <body><table border="1"><tr>${headers.map(h => `<th style="background:#4f46e5;color:white;">${h}</th>`).join('')}</tr>${rows}</table></body></html>`;
+    <body><table border="1"><tr>${headers.map(h => `<th style="background:#4f46e5;color:white;">${esc(h)}</th>`).join('')}</tr>${rows}</table></body></html>`;
 
   downloadFile(html, `数据清洗记录_${formatDate(new Date().toISOString())}.xls`, 'application/vnd.ms-excel');
   showToast(`📊 已导出 ${records.length} 条记录到 Excel`);
@@ -640,7 +808,7 @@ function importCSV(event) {
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
-      const text = e.target.result.replace(/^\uFEFF/, ''); // 去掉 BOM
+      const text = e.target.result.replace(/^\uFEFF/, '');
       const lines = text.split('\n').filter(l => l.trim());
       if (lines.length < 2) { showToast('⚠️ CSV 文件为空'); return; }
 
@@ -656,9 +824,17 @@ function importCSV(event) {
           return idx >= 0 ? (cols[idx] || '').trim() : '';
         };
 
-        const before = get('去重前数量');
-        const after = get('去重后数量');
-        const { dupCount, dupRate } = calcDupStats(before, after);
+        // 动态收集去重列（从 headers 中识别）
+        const dedupColumns = [];
+        const dedupValues = {};
+        const knownFields = ['任务名称','创建时间','处理人','状态','去重前表','去重后表','去重前表名','去重后表名','总去重率(%)','数据来源(分号分隔)','数据来源','数据范围','OSS表','耗时(分钟)','SQL脚本','备注'];
+        headers.forEach((h, hi) => {
+          if (!knownFields.includes(h) && h && cols[hi]) {
+            const colId = 'd_imp_' + i + '_' + hi;
+            dedupColumns.push({ id: colId, name: h });
+            dedupValues[colId] = cols[hi].trim();
+          }
+        });
 
         const record = {
           id: genId(),
@@ -666,13 +842,11 @@ function importCSV(event) {
           createdAt: get('创建时间') ? new Date(get('创建时间')).toISOString() : new Date().toISOString(),
           operator: get('处理人'),
           status: get('状态') || '进行中',
-          beforeTable: get('去重前表名'),
-          beforeCount: before,
+          beforeTable: get('去重前表') || get('去重前表名'),
           beforeSources: get('数据来源(分号分隔)') ? get('数据来源(分号分隔)').split(/[;；]/).map(s => s.trim()).filter(Boolean) : (get('数据来源') ? get('数据来源').split(/[;；]/).map(s => s.trim()).filter(Boolean) : []),
-          afterTable: get('去重后表名'),
-          afterCount: after,
-          dedupRules: get('去重规则'),
-          dupCount, dupRate,
+          afterTable: get('去重后表') || get('去重后表名'),
+          dedupColumns,
+          dedupValues,
           dataRange: get('数据范围'),
           ossTable: get('OSS表'),
           sqlScript: get('SQL脚本'),
@@ -1739,15 +1913,24 @@ if (records.length === 0) {
     operator: '示例',
     status: '已完成',
     beforeTable: 'merged_incremental',
-    beforeCount: '50000000',
     beforeSources: [
       'glm_data.cdl.cdl_facebook_posts_di',
       'glm_data.cdl.cdl_zhihu_question_answer_di',
       'glm_data.cdl.cdl_csdn_details_di',
     ],
-    afterTable: 'merged_incremental_dedup',
-    afterCount: '42000000',
-    dedupRules: 'url, content',
+    afterTable: 'merged_mh_dedup',
+    dedupColumns: [
+      { id: "d_ex1", name: "去重前数量" },
+      { id: "d_ex2", name: "精确去重后数量" },
+      { id: "d_ex3", name: "50filter后数量" },
+      { id: "d_ex4", name: "MinHash去重后数量" },
+    ],
+    dedupValues: {
+      d_ex1: "50000000",
+      d_ex2: "42000000",
+      d_ex3: "38000000",
+      d_ex4: "35000000",
+    },
     dataRange: "di='20260519' ~ '20260709'",
     ossTable: 'oss://glm-data/dedup/merged_202607/',
     sqlScript: 'DROP TABLE IF EXISTS merged_incremental_dedup;\nCREATE TABLE merged_incremental_dedup AS\nSELECT * FROM (\n  SELECT *, ROW_NUMBER() OVER(PARTITION BY url, content ORDER BY row_id) as rn\n  FROM merged_incremental\n) t WHERE rn = 1;',
