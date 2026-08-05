@@ -8,17 +8,45 @@ let sortField = 'createdAt';// 排序字段
 let sortAsc = false;        // 默认按日期降序（最新的在前）
 let charts = {};            // Chart 实例缓存
 
+// 检测是否有后端 API（局域网模式 vs 纯静态模式）
+const HAS_BACKEND = window.location.protocol.startsWith('http') && !window.location.hostname.includes('github.io');
+
 // ============================================================
-// 数据存储层 (localStorage)
+// 数据存储层 (后端 API + localStorage 回退)
 // ============================================================
 
-function loadRecords() {
+async function loadRecords() {
+  if (HAS_BACKEND) {
+    try {
+      const resp = await fetch('/api/records');
+      const data = await resp.json();
+      records = data.records || [];
+      return;
+    } catch (e) {
+      console.warn('后端不可用，回退到 localStorage', e);
+    }
+  }
+  // 回退：localStorage
   const data = localStorage.getItem(STORAGE_KEY);
   records = data ? JSON.parse(data) : [];
 }
 
-function saveRecords() {
+async function saveRecords() {
+  // 先存 localStorage（即时缓存，离线可用）
   localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+
+  // 如果有后端，同步到后端
+  if (HAS_BACKEND) {
+    try {
+      await fetch('/api/records', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ records }),
+      });
+    } catch (e) {
+      console.warn('保存到后端失败（数据已存本地）', e);
+    }
+  }
 }
 
 // ============================================================
@@ -1901,13 +1929,28 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// 初始化
-loadRecords();
-refreshAll();
+// 初始化（异步加载数据）
+(async () => {
+  await loadRecords();
 
-// 如果是首次使用，添加一条示例记录帮助用户了解
-if (records.length === 0) {
-  records.push({
+  // 如果后端数据为空，但 localStorage 有数据，自动迁移到后端
+  if (records.length === 0 && HAS_BACKEND) {
+    const localData = localStorage.getItem(STORAGE_KEY);
+    if (localData) {
+      try {
+        const localRecords = JSON.parse(localData);
+        if (localRecords && localRecords.length > 0) {
+          records = localRecords;
+          await saveRecords(); // 同步到后端
+          showToast(`✅ 已迁移 ${localRecords.length} 条本地数据到共享存储`);
+        }
+      } catch (e) {}
+    }
+  }
+
+  // 首次使用（无任何数据），添加示例记录
+  if (records.length === 0) {
+    records.push({
     id: genId(),
     taskName: '示例：6月增量数据去重（可删除）',
     createdAt: new Date().toISOString(),
@@ -1950,5 +1993,7 @@ if (records.length === 0) {
     ],
   });
   saveRecords();
+  }
+
   refreshAll();
-}
+})();
