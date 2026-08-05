@@ -825,6 +825,8 @@ function openPartitionManager(recordId) {
   switchPartitionMode('list');
   partitionSortField = 'partition';
   partitionSortAsc = true;
+  selectedPartitionIndexes.clear();
+  cancelBatchDelete();
   document.getElementById('partitionSearch').value = '';
   renderPartitionTable();
   document.getElementById('partitionModal').style.display = 'flex';
@@ -895,6 +897,7 @@ function renderPartitionTable() {
     tbody.innerHTML = '';
     tableEl.style.display = 'none';
     emptyEl.style.display = 'block';
+    updateSelectionUI();
     return;
   }
   tableEl.style.display = '';
@@ -903,8 +906,10 @@ function renderPartitionTable() {
   tbody.innerHTML = filtered.map(p => {
     const dupCountDisplay = p.dupCount !== '' ? formatNum(p.dupCount) : '-';
     const dupRateDisplay = p.dupRateStr !== '' ? `${p.dupRateStr}%` : '-';
+    const isChecked = selectedPartitionIndexes.has(p._index);
     return `
-      <tr>
+      <tr class="${isChecked ? 'selected-row' : ''}">
+        <td class="checkbox-col"><input type="checkbox" data-index="${p._index}" ${isChecked ? 'checked' : ''} onchange="toggleSelectPartition(${p._index}, this.checked)"></td>
         <td class="partition-name">${esc(p.partition || '-')}</td>
         <td class="num-col">${p.beforeCount ? formatNum(p.beforeCount) : '-'}</td>
         <td class="num-col">${p.afterCount ? formatNum(p.afterCount) : '-'}</td>
@@ -917,6 +922,111 @@ function renderPartitionTable() {
       </tr>
     `;
   }).join('');
+
+  // 更新全选框状态
+  const selectAllCheckbox = document.getElementById('partitionSelectAll');
+  const visibleIndexes = filtered.map(p => p._index);
+  const allSelected = visibleIndexes.length > 0 && visibleIndexes.every(i => selectedPartitionIndexes.has(i));
+  selectAllCheckbox.checked = allSelected;
+
+  updateSelectionUI();
+}
+
+// ============================================================
+// 分区选择 & 批量删除
+// ============================================================
+
+let selectedPartitionIndexes = new Set(); // 当前选中的分区 index 集合
+
+/** 单个复选框切换 */
+function toggleSelectPartition(index, checked) {
+  if (checked) {
+    selectedPartitionIndexes.add(index);
+  } else {
+    selectedPartitionIndexes.delete(index);
+  }
+  // 只更新 UI 状态，不重新渲染整个表格（避免闪烁）
+  const row = document.querySelector(`input[data-index="${index}"]`)?.closest('tr');
+  if (row) row.classList.toggle('selected-row', checked);
+  updateSelectionUI();
+  // 更新全选框
+  const selectAllCheckbox = document.getElementById('partitionSelectAll');
+  const partitions = getPartitions(currentPartitionRecordId);
+  const allSelected = partitions.length > 0 && partitions.every((_, i) => selectedPartitionIndexes.has(i));
+  selectAllCheckbox.checked = allSelected;
+}
+
+/** 全选/反全选 */
+function toggleSelectAll(checkbox) {
+  const partitions = getPartitions(currentPartitionRecordId);
+  const search = document.getElementById('partitionSearch').value.toLowerCase().trim();
+
+  if (checkbox.checked) {
+    // 选中当前筛选结果中的所有分区
+    partitions.forEach((p, i) => {
+      if (!search || (p.partition || '').toLowerCase().includes(search)) {
+        selectedPartitionIndexes.add(i);
+      }
+    });
+  } else {
+    // 取消当前筛选结果中的选中
+    partitions.forEach((p, i) => {
+      if (!search || (p.partition || '').toLowerCase().includes(search)) {
+        selectedPartitionIndexes.delete(i);
+      }
+    });
+  }
+  renderPartitionTable();
+}
+
+/** 更新选择相关的 UI（已选数量、批量删除按钮等） */
+function updateSelectionUI() {
+  const count = selectedPartitionIndexes.size;
+  const countBadge = document.getElementById('partitionSelectedCount');
+  const batchBtn = document.getElementById('batchDeleteBtn');
+  const clearBtn = document.getElementById('clearSelectionBtn');
+
+  countBadge.style.display = count > 0 ? 'inline-block' : 'none';
+  countBadge.textContent = `已选 ${count} 项`;
+
+  batchBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+  clearBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+}
+
+/** 清空选择 */
+function clearPartitionSelection() {
+  selectedPartitionIndexes.clear();
+  cancelBatchDelete();
+  renderPartitionTable();
+}
+
+/** 显示批量删除内联确认 */
+function showBatchDeleteConfirm() {
+  const count = selectedPartitionIndexes.size;
+  if (count === 0) return;
+  const bar = document.getElementById('batchDeleteConfirmBar');
+  document.getElementById('batchDeleteMessage').textContent = `⚠️ 确认删除选中的 ${count} 个分区？此操作不可撤销。`;
+  bar.style.display = 'flex';
+  bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/** 取消批量删除确认 */
+function cancelBatchDelete() {
+  document.getElementById('batchDeleteConfirmBar').style.display = 'none';
+}
+
+/** 执行批量删除 */
+function executeBatchDelete() {
+  const partitions = getPartitions(currentPartitionRecordId);
+  // 按 index 从大到小排序，避免删除时索引错位
+  const sortedIndexes = [...selectedPartitionIndexes].sort((a, b) => b - a);
+  sortedIndexes.forEach(i => partitions.splice(i, 1));
+
+  saveRecords();
+  selectedPartitionIndexes.clear();
+  cancelBatchDelete();
+  renderPartitionTable();
+  showToast(`🗑 已删除 ${sortedIndexes.length} 个分区`);
 }
 
 /** 分区排序 */
@@ -1001,17 +1111,21 @@ function savePartitionFromEditor() {
   showToast(index >= 0 ? '✅ 分区已更新' : '✅ 分区已添加');
 }
 
-/** 删除单条分区 */
+/** 删除单条分区（内联确认，不弹遮罩） */
 function deletePartition(index) {
   const partitions = getPartitions(currentPartitionRecordId);
   const p = partitions[index];
   if (!p) return;
-  showConfirm(`确认删除分区「${p.partition}」吗？`, () => {
-    partitions.splice(index, 1);
-    saveRecords();
-    renderPartitionTable();
-    showToast('🗑 已删除');
-  });
+
+  // 单条删除复用批量删除的内联确认条
+  selectedPartitionIndexes.clear();
+  selectedPartitionIndexes.add(index);
+  cancelBatchDelete();  // 先清除之前可能存在的确认条
+
+  const bar = document.getElementById('batchDeleteConfirmBar');
+  document.getElementById('batchDeleteMessage').textContent = `⚠️ 确认删除分区「${p.partition}」？此操作不可撤销。`;
+  bar.style.display = 'flex';
+  bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ============================================================

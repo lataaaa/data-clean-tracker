@@ -543,6 +543,54 @@ body {
   flex-wrap: wrap;
 }
 
+/* 复选框列 */
+.checkbox-col { width: 36px; text-align: center; }
+.partition-table input[type="checkbox"] {
+  width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary);
+}
+
+/* 选中行高亮 */
+.partition-table tbody tr.selected-row {
+  background: var(--primary-light) !important;
+}
+
+/* 已选数量标签 */
+.selected-count-badge {
+  background: var(--primary);
+  color: white;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 内联确认条 */
+.inline-confirm-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  gap: 12px;
+  animation: fadeIn 0.15s ease;
+}
+
+.inline-confirm-msg {
+  color: #991b1b;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.inline-confirm-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .partition-toolbar .search-input { width: 240px; }
 
 /* 分区表格 */

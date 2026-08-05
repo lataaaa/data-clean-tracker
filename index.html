@@ -302,13 +302,27 @@
         <div id="partitionListMode" class="ptab-content active">
           <div class="partition-toolbar">
             <input type="text" id="partitionSearch" class="search-input" placeholder="🔍 搜索分区名…" oninput="renderPartitionTable()">
+            <span id="partitionSelectedCount" class="selected-count-badge" style="display:none;">已选 0 项</span>
+            <button class="btn btn-danger btn-sm" id="batchDeleteBtn" onclick="showBatchDeleteConfirm()" style="display:none;">🗑 批量删除</button>
+            <button class="btn btn-secondary btn-sm" onclick="clearPartitionSelection()" id="clearSelectionBtn" style="display:none;">取消选择</button>
             <button class="btn btn-primary btn-sm" onclick="openPartitionEditor()">+ 新增分区</button>
             <button class="btn btn-secondary btn-sm" onclick="exportPartitionExcel()">📊 导出Excel</button>
           </div>
+
+          <!-- 内联确认条（批量删除） -->
+          <div id="batchDeleteConfirmBar" class="inline-confirm-bar" style="display:none;">
+            <span id="batchDeleteMessage" class="inline-confirm-msg"></span>
+            <div class="inline-confirm-actions">
+              <button class="btn btn-danger btn-sm" onclick="executeBatchDelete()">确认删除</button>
+              <button class="btn btn-secondary btn-sm" onclick="cancelBatchDelete()">取消</button>
+            </div>
+          </div>
+
           <div class="table-container">
             <table class="data-table partition-table">
               <thead>
                 <tr>
+                  <th class="checkbox-col"><input type="checkbox" id="partitionSelectAll" onchange="toggleSelectAll(this)"></th>
                   <th onclick="sortPartitions('partition')" class="sortable">分区名 ↕</th>
                   <th onclick="sortPartitions('beforeCount')" class="sortable num-col">去重前数量 ↕</th>
                   <th onclick="sortPartitions('afterCount')" class="sortable num-col">去重后数量 ↕</th>
