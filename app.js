@@ -11,6 +11,49 @@ let charts = {};            // Chart 实例缓存
 // 检测是否有后端 API（局域网模式 vs 纯静态模式）
 const HAS_BACKEND = window.location.protocol.startsWith('http') && !window.location.hostname.includes('github.io');
 
+/** 从当前浏览器 localStorage 同步数据到后端（合并模式） */
+async function syncFromLocal() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    showToast('⚠️ 当前浏览器本地没有数据');
+    return;
+  }
+  let localRecords;
+  try {
+    localRecords = JSON.parse(raw);
+  } catch (e) {
+    showToast('❌ 本地数据解析失败');
+    return;
+  }
+  if (!localRecords || localRecords.length === 0) {
+    showToast('⚠️ 本地没有记录');
+    return;
+  }
+
+  if (!HAS_BACKEND) {
+    showToast('⚠️ 当前为离线模式，无需同步');
+    return;
+  }
+
+  // 合并：用 id 去重，本地数据覆盖后端的同 id 记录，新增的不重复添加
+  const existingIds = new Set(records.map(r => r.id));
+  let added = 0;
+  localRecords.forEach(r => {
+    if (!existingIds.has(r.id)) {
+      records.push(r);
+      added++;
+    } else {
+      // 更新已有记录
+      const idx = records.findIndex(x => x.id === r.id);
+      records[idx] = r;
+    }
+  });
+
+  await saveRecords();
+  refreshAll();
+  showToast(`✅ 已从本地同步 ${localRecords.length} 条记录（新增 ${added} 条）`);
+}
+
 // ============================================================
 // 数据存储层 (后端 API + localStorage 回退)
 // ============================================================

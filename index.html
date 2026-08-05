@@ -50,6 +50,7 @@
         <button class="btn btn-secondary" onclick="exportCSV()">📥 导出CSV</button>
         <button class="btn btn-secondary" onclick="exportExcel()">📊 导出Excel</button>
         <button class="btn btn-secondary" onclick="document.getElementById('importCSVInput').click()">📤 导入CSV</button>
+        <button class="btn btn-secondary" onclick="syncFromLocal()" title="把当前浏览器的本地数据同步到共享存储">🔄 从本地同步</button>
         <input type="file" id="importCSVInput" accept=".csv" style="display:none" onchange="importCSV(event)">
       </div>
     </div>
