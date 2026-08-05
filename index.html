@@ -342,6 +342,26 @@
 
         <!-- 粘贴模式 -->
         <div id="partitionPasteMode" class="ptab-content">
+          <!-- 数据类型切换：去重前 / 去重后 / 前后一起 -->
+          <div class="paste-type-selector">
+            <button class="ptype-btn active" data-pastetype="before" onclick="switchPasteType('before')">
+              📥 去重前数据
+              <span class="ptype-hint">只填去重前数量</span>
+            </button>
+            <button class="ptype-btn" data-pastetype="after" onclick="switchPasteType('after')">
+              📤 去重后数据
+              <span class="ptype-hint">只填去重后数量</span>
+            </button>
+            <button class="ptype-btn" data-pastetype="both" onclick="switchPasteType('both')">
+              🔀 前后都有
+              <span class="ptype-hint">每行含两个数量</span>
+            </button>
+          </div>
+
+          <div class="paste-type-desc" id="pasteTypeDesc">
+            👆 先粘贴<strong>去重前表</strong>的全部分区数据，导入后再切到「去重后数据」粘贴。系统会按分区名自动合并。
+          </div>
+
           <div class="paste-guide">
             <p>📋 <strong>将查询结果粘贴到下方文本框</strong>，自动识别以下格式：</p>
             <div class="paste-examples">
@@ -358,23 +378,19 @@
                 <span class="paste-label">横排CSV：</span>
                 <code>di=20260519,5000000,4200000</code>
               </div>
-              <div class="paste-example">
-                <span class="paste-label">只有数量（自动 before=after）：</span>
-                <code>lang=kor_Hang&nbsp;&nbsp;3,178,599,404</code>
-              </div>
             </div>
           </div>
-          <textarea id="partitionPasteArea" class="paste-textarea" rows="12" placeholder="在此粘贴查询结果…&#10;&#10;支持两种格式：&#10;1. 竖排（从表格复制的多行数据，自动识别 xxx= 分区名）&#10;2. 横排（每行一条：分区名 数量1 数量2）&#10;&#10;千分位逗号、数据大小、时间等会自动忽略"></textarea>
+          <textarea id="partitionPasteArea" class="paste-textarea" rows="10" placeholder="在此粘贴查询结果…&#10;&#10;支持两种格式：&#10;1. 竖排（从表格复制的多行数据，自动识别 xxx= 分区名）&#10;2. 横排（每行一条：分区名 数量1 [数量2]）&#10;&#10;千分位逗号、数据大小、时间等会自动忽略"></textarea>
           <div class="paste-actions">
-            <label class="paste-mode-label">
-              导入方式：
+            <label class="paste-mode-label" id="pasteMergeModeLabel">
+              合并方式：
               <select id="pasteImportMode">
-                <option value="append">追加（保留现有分区）</option>
+                <option value="merge">合并（按分区名匹配，保留已有数据）</option>
                 <option value="replace">覆盖（清空后导入）</option>
               </select>
             </label>
             <button class="btn btn-primary" onclick="parseAndImportPartitions()">解析并导入</button>
-            <button class="btn btn-secondary" onclick="document.getElementById('partitionPasteArea').value=''">清空</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('partitionPasteArea').value=''">清空文本框</button>
           </div>
         </div>
       </div>

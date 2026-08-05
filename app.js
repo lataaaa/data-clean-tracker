@@ -847,6 +847,34 @@ function switchPartitionMode(mode) {
   document.getElementById('partitionPasteMode').classList.toggle('active', mode === 'paste');
 }
 
+/** 粘贴数据类型切换：before / after / both */
+let currentPasteType = 'before';
+
+function switchPasteType(type) {
+  currentPasteType = type;
+  document.querySelectorAll('.ptype-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.pastetype === type);
+  });
+
+  const desc = document.getElementById('pasteTypeDesc');
+  const mergeLabel = document.getElementById('pasteMergeModeLabel');
+  const mergeSelect = document.getElementById('pasteImportMode');
+
+  if (type === 'before') {
+    desc.innerHTML = '👆 先粘贴<strong>去重前表</strong>的全部分区数据，导入后再切到「去重后数据」粘贴。系统会按分区名自动合并。';
+    mergeLabel.style.display = 'inline-flex';
+    mergeSelect.innerHTML = '<option value="merge">合并（按分区名匹配，保留已有数据）</option><option value="replace">覆盖（清空后导入）</option>';
+  } else if (type === 'after') {
+    desc.innerHTML = '👆 现在粘贴<strong>去重后表</strong>的分区数据。已有的分区会自动填充去重后数量，重复率自动计算。新分区也会添加。';
+    mergeLabel.style.display = 'inline-flex';
+    mergeSelect.innerHTML = '<option value="merge">合并（按分区名匹配，保留已有数据）</option><option value="replace">覆盖（清空后导入）</option>';
+  } else {
+    desc.innerHTML = '🔀 每行包含<strong>去重前和去重后两个数量</strong>（如：<code>lang=xxx 5000000 4200000</code>），一次性导入完整对比数据。';
+    mergeLabel.style.display = 'inline-flex';
+    mergeSelect.innerHTML = '<option value="merge">合并（按分区名匹配，保留已有数据）</option><option value="replace">覆盖（清空后导入）</option>';
+  }
+}
+
 /** 渲染分区表格 + 汇总 */
 function renderPartitionTable() {
   if (!currentPartitionRecordId) return;
@@ -1169,9 +1197,7 @@ function parseAndImportPartitions() {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
   if (lines.length === 0) { showToast('⚠️ 没有有效数据'); return; }
 
-  // 判断是横排还是竖排：
-  // 横排 = 第一行能通过 tab/逗号/多空格 拆出多列且第二列是数字
-  // 竖排 = 第一行是分区名（如 lang=xxx 或 di=xxx），第二行是数字
+  // 判断是横排还是竖排
   const firstLine = lines[0];
   const isHorizontal = checkHorizontalFormat(firstLine);
 
@@ -1194,20 +1220,76 @@ function parseAndImportPartitions() {
   const importMode = document.getElementById('pasteImportMode').value;
   const partitions = getPartitions(currentPartitionRecordId);
 
+  // 根据粘贴类型决定写入哪个字段
+  // before = 只写 beforeCount；after = 只写 afterCount；both = 写前后两个
+  let stats = { imported: 0, merged: 0, newAdded: 0 };
+
   if (importMode === 'replace') {
-    partitions.length = 0;  // 清空
+    partitions.length = 0;  // 覆盖模式：清空
+    parsed.forEach(p => {
+      const newPart = { partition: p.partition, beforeCount: '', afterCount: '' };
+      if (currentPasteType === 'before') { newPart.beforeCount = p.beforeCount; newPart.afterCount = p.afterCount; }
+      else if (currentPasteType === 'after') { newPart.afterCount = p.beforeCount; }
+      else { newPart.beforeCount = p.beforeCount; newPart.afterCount = p.afterCount; }
+      // both 模式且只有一个数量：before=after
+      if (currentPasteType === 'both' && p.afterCount === p.beforeCount) {
+        newPart.beforeCount = p.beforeCount;
+        newPart.afterCount = p.beforeCount;
+      }
+      partitions.push(newPart);
+      stats.imported++;
+    });
+  } else {
+    // 合并模式：按分区名匹配
+    // 建立 partition name → index 的映射
+    const partMap = {};
+    partitions.forEach((p, i) => {
+      if (p.partition) partMap[p.partition] = i;
+    });
+
+    parsed.forEach(p => {
+      const name = p.partition;
+      if (partMap.hasOwnProperty(name)) {
+        // 已存在：合并写入对应字段
+        const existing = partitions[partMap[name]];
+        if (currentPasteType === 'before') {
+          existing.beforeCount = p.beforeCount;
+        } else if (currentPasteType === 'after') {
+          existing.afterCount = p.beforeCount;  // 竖排/单列时 beforeCount 存的就是唯一数量
+        } else {
+          existing.beforeCount = p.beforeCount;
+          existing.afterCount = p.afterCount;
+        }
+        stats.merged++;
+      } else {
+        // 新分区
+        const newPart = { partition: name, beforeCount: '', afterCount: '' };
+        if (currentPasteType === 'before') { newPart.beforeCount = p.beforeCount; newPart.afterCount = p.afterCount; }
+        else if (currentPasteType === 'after') { newPart.afterCount = p.beforeCount; }
+        else { newPart.beforeCount = p.beforeCount; newPart.afterCount = p.afterCount; }
+        if (currentPasteType === 'both' && p.afterCount === p.beforeCount) {
+          newPart.afterCount = p.beforeCount;
+        }
+        partitions.push(newPart);
+        partMap[name] = partitions.length - 1;
+        stats.newAdded++;
+      }
+      stats.imported++;
+    });
   }
 
-  parsed.forEach(p => partitions.push(p));
   saveRecords();
-
-  // 切回列表模式查看结果
-  switchPartitionMode('list');
   renderPartitionTable();
   document.getElementById('partitionPasteArea').value = '';
 
   const headerNote = skippedHeader ? '（已跳过表头）' : '';
-  showToast(`✅ 成功导入 ${parsed.length} 个分区${headerNote}`);
+  let msg;
+  if (importMode === 'replace') {
+    msg = `✅ 覆盖导入 ${stats.imported} 个分区${headerNote}`;
+  } else {
+    msg = `✅ 导入完成：合并 ${stats.merged} 个，新增 ${stats.newAdded} 个${headerNote}`;
+  }
+  showToast(msg);
 }
 
 /**
