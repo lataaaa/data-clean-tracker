@@ -156,21 +156,11 @@
       <!-- 去重信息 -->
       <fieldset class="form-section">
         <legend>🔀 去重信息</legend>
-        <div class="form-grid">
-          <div class="form-group">
-            <label>去重前表</label>
-            <input type="text" id="beforeTable" placeholder="如：merged_incremental" list="tableNamesList">
-          </div>
-          <div class="form-group">
-            <label>去重后表</label>
-            <input type="text" id="afterTable" placeholder="如：merged_mh_dedup" list="tableNamesList">
-          </div>
-        </div>
 
-        <!-- 动态去重数量列 -->
+        <!-- 动态去重阶段（阶段名 + 表名 + 数量） -->
         <div class="dedup-fields-header">
-          <span class="dedup-fields-title">📊 去重阶段数量</span>
-          <button type="button" class="btn btn-sm btn-add" onclick="addDedupColumn()">+ 添加数量列</button>
+          <span class="dedup-fields-title">📊 去重阶段（每行 = 阶段名 + 表名 + 数量）</span>
+          <button type="button" class="btn btn-sm btn-add" onclick="addDedupColumn()">+ 添加阶段</button>
         </div>
         <div id="dedupColumnsContainer" class="dedup-columns-container">
           <!-- 动态生成 -->
@@ -405,7 +395,7 @@
               <tr>
                 <th>列名</th>
                 <th>去重规则</th>
-                <th>输入表 → 输出表</th>
+                <th>输入表</th>
                 <th class="action-col">操作</th>
               </tr>
             </thead>
@@ -439,15 +429,9 @@
           <label>去重规则</label>
           <input type="text" id="columnRule" placeholder="如：url, content 或 minhash(sim=0.8)">
         </div>
-        <div class="form-grid">
-          <div class="form-group">
-            <label>输入表名</label>
-            <input type="text" id="columnInputTable" placeholder="如：raw_table">
-          </div>
-          <div class="form-group">
-            <label>输出表名</label>
-            <input type="text" id="columnOutputTable" placeholder="如：dedup_table">
-          </div>
+        <div class="form-group">
+          <label>输入表名</label>
+          <input type="text" id="columnInputTable" placeholder="如：raw_table">
         </div>
         <div class="modal-actions">
           <button class="btn btn-primary" onclick="saveColumnFromEditor()">💾 保存</button>

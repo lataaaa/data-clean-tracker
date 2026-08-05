@@ -507,7 +507,7 @@ body {
 
 .dedup-col-row {
   display: grid;
-  grid-template-columns: 180px 1fr 36px;
+  grid-template-columns: 150px 1fr 1fr 32px;
   gap: 8px;
   align-items: center;
 }

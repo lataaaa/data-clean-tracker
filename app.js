@@ -124,16 +124,17 @@ function calcRecordTotalRate(record) {
   return (((first - last) / first) * 100).toFixed(2);
 }
 
-/** 表单中添加去重列行 */
-function addDedupColumn(name = '', value = '') {
+/** 表单中添加去重列行（阶段名 + 表名 + 数量） */
+function addDedupColumn(name = '', value = '', tableName = '') {
   const container = document.getElementById('dedupColumnsContainer');
   const colId = genDedupColId();
   const row = document.createElement('div');
   row.className = 'dedup-col-row';
   row.dataset.colid = colId;
   row.innerHTML = `
-    <input type="text" class="dedup-col-name" placeholder="列名，如：精确去重后数量" value="${esc(name)}">
-    <input type="number" class="dedup-col-value" placeholder="数量，如：42000000" value="${esc(value)}" oninput="updateFormDedupRate()">
+    <input type="text" class="dedup-col-name" placeholder="阶段名，如：去重前" value="${esc(name)}">
+    <input type="text" class="dedup-col-table" placeholder="表名，如：merged_raw" list="tableNamesList" value="${esc(tableName)}">
+    <input type="number" class="dedup-col-value" placeholder="数量" value="${esc(value)}" oninput="updateFormDedupRate()">
     <button type="button" class="dedup-col-remove" onclick="this.parentElement.remove(); updateFormDedupRate()">✕</button>
   `;
   container.appendChild(row);
@@ -347,8 +348,8 @@ function resetForm() {
   addSourceField('');
   // 重置去重列为默认两列
   document.getElementById('dedupColumnsContainer').innerHTML = '';
-  addDedupColumn('去重前数量', '');
-  addDedupColumn('去重后数量', '');
+  addDedupColumn('去重前', '', '');
+  addDedupColumn('去重后', '', '');
   updateFormDedupRate();
 }
 
@@ -377,18 +378,23 @@ function saveRecord(event) {
     if (input.value.trim()) sources.push(input.value.trim());
   });
 
-  // 收集动态去重列
+  // 收集动态去重列（阶段名 + 表名 + 数量）
   const dedupColumns = [];
   const dedupValues = {};
   document.querySelectorAll('.dedup-col-row').forEach(row => {
     const colId = row.dataset.colid;
     const name = row.querySelector('.dedup-col-name').value.trim();
+    const tableName = row.querySelector('.dedup-col-table').value.trim();
     const value = row.querySelector('.dedup-col-value').value.trim();
-    if (name || value) {
-      dedupColumns.push({ id: colId, name: name || '未命名' });
+    if (name || value || tableName) {
+      dedupColumns.push({ id: colId, name: name || '未命名', tableName });
       dedupValues[colId] = value;
     }
   });
+
+  // 兼容：beforeTable/afterTable 取第一列和最后一列的表名
+  const beforeTable = dedupColumns.length > 0 ? dedupColumns[0].tableName : '';
+  const afterTable = dedupColumns.length > 0 ? dedupColumns[dedupColumns.length - 1].tableName : '';
 
   const record = {
     id: id || genId(),
@@ -396,9 +402,9 @@ function saveRecord(event) {
     createdAt: id ? (records.find(r => r.id === id)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
     operator: document.getElementById('operator').value.trim(),
     status: document.getElementById('status').value,
-    beforeTable: document.getElementById('beforeTable').value.trim(),
+    beforeTable,
     beforeSources: sources,
-    afterTable: document.getElementById('afterTable').value.trim(),
+    afterTable,
     dedupColumns,
     dedupValues,
     dataRange: document.getElementById('dataRange').value.trim(),
@@ -436,8 +442,6 @@ function editRecord(id) {
   document.getElementById('createdAtDisplay').value = formatDateTime(r.createdAt);
   document.getElementById('operator').value = r.operator || '';
   document.getElementById('status').value = r.status || '进行中';
-  document.getElementById('beforeTable').value = r.beforeTable || '';
-  document.getElementById('afterTable').value = r.afterTable || '';
   document.getElementById('dataRange').value = r.dataRange || '';
   document.getElementById('ossTable').value = r.ossTable || '';
   document.getElementById('sqlScript').value = r.sqlScript || '';
@@ -452,15 +456,15 @@ function editRecord(id) {
     addSourceField('');
   }
 
-  // 动态去重列
+  // 动态去重列（阶段名 + 表名 + 数量）
   document.getElementById('dedupColumnsContainer').innerHTML = '';
   if (r.dedupColumns && r.dedupColumns.length > 0) {
     r.dedupColumns.forEach(c => {
-      addDedupColumn(c.name, (r.dedupValues || {})[c.id] || '');
+      addDedupColumn(c.name, (r.dedupValues || {})[c.id] || '', c.tableName || '');
     });
   } else {
-    addDedupColumn('去重前数量', '');
-    addDedupColumn('去重后数量', '');
+    addDedupColumn('去重前', '', '');
+    addDedupColumn('去重后', '', '');
   }
   updateFormDedupRate();
 
@@ -478,8 +482,6 @@ function copyNew(id) {
   document.getElementById('createdAtDisplay').value = '';
   document.getElementById('operator').value = r.operator || '';
   document.getElementById('status').value = '进行中';
-  document.getElementById('beforeTable').value = r.beforeTable || '';
-  document.getElementById('afterTable').value = r.afterTable || '';
   document.getElementById('dataRange').value = r.dataRange || '';
   document.getElementById('ossTable').value = r.ossTable || '';
   document.getElementById('sqlScript').value = r.sqlScript || '';
@@ -493,15 +495,15 @@ function copyNew(id) {
     addSourceField('');
   }
 
-  // 动态去重列
+  // 动态去重列（阶段名 + 表名 + 数量）
   document.getElementById('dedupColumnsContainer').innerHTML = '';
   if (r.dedupColumns && r.dedupColumns.length > 0) {
     r.dedupColumns.forEach(c => {
-      addDedupColumn(c.name, (r.dedupValues || {})[c.id] || '');
+      addDedupColumn(c.name, (r.dedupValues || {})[c.id] || '', c.tableName || '');
     });
   } else {
-    addDedupColumn('去重前数量', '');
-    addDedupColumn('去重后数量', '');
+    addDedupColumn('去重前', '', '');
+    addDedupColumn('去重后', '', '');
   }
   updateFormDedupRate();
 
@@ -535,10 +537,14 @@ function viewDetail(id) {
   const values = r.dedupValues || {};
   const cols = r.dedupColumns || [];
 
-  // 构建去重阶段展示
+  // 构建去重阶段展示（阶段名 + 表名 + 数量）
   const dedupStageRows = cols.map(c => {
     const val = values[c.id] || '';
-    return `<div class="detail-row"><span class="label">${esc(c.name)}</span><span class="value">${val ? formatNum(val) : '-'}</span></div>`;
+    const tableName = c.tableName || '';
+    return `<div class="detail-row">
+      <span class="label">${esc(c.name)}</span>
+      <span class="value">${tableName ? `<span style="font-family:monospace;font-size:12px;">${esc(tableName)}</span> · ` : ''}<strong>${val ? formatNum(val) : '-'}</strong></span>
+    </div>`;
   }).join('');
 
   // 阶段间去重率
@@ -569,8 +575,6 @@ function viewDetail(id) {
     </div>
     <div class="detail-section">
       <h3>🔀 去重信息</h3>
-      <div class="detail-row"><span class="label">去重前表</span><span class="value">${esc(r.beforeTable || '-')}</span></div>
-      <div class="detail-row"><span class="label">去重后表</span><span class="value">${esc(r.afterTable || '-')}</span></div>
       ${dedupStageRows}
       ${stageRatesHtml}
       ${totalRate !== '' ? `<div class="detail-row"><span class="label">总去重率</span><span class="value"><span class="${getDupRateClass(Number(totalRate))}">${totalRate}%</span></span></div>` : ''}
@@ -1018,8 +1022,8 @@ function migratePartitions(record) {
   const col1 = 'col_' + Date.now() + '_1';
   const col2 = 'col_' + Date.now() + '_2';
   record.partitionColumns = [
-    { id: col1, name: '去重前', rule: '', inputTable: '', outputTable: '' },
-    { id: col2, name: '去重后', rule: '', inputTable: '', outputTable: '' },
+    { id: col1, name: '去重前', rule: '', inputTable: '' },
+    { id: col2, name: '去重后', rule: '', inputTable: '' },
   ];
   record.partitions = record.partitions.map(p => ({
     partition: p.partition,
@@ -1119,7 +1123,7 @@ function renderColumnManager() {
     <tr>
       <td><strong>${esc(col.name)}</strong></td>
       <td>${esc(col.rule || '-')}</td>
-      <td class="table-flow">${esc(col.inputTable || '-')} <span class="arrow">→</span> ${esc(col.outputTable || '-')}</td>
+      <td class="table-flow">${esc(col.inputTable || '-')}</td>
       <td class="action-col">
         <button class="row-btn" title="上移" onclick="moveColumn(${i}, -1)" ${i === 0 ? 'disabled' : ''}>⬆</button>
         <button class="row-btn" title="下移" onclick="moveColumn(${i}, 1)" ${i === columns.length - 1 ? 'disabled' : ''}>⬇</button>
@@ -1139,13 +1143,11 @@ function openColumnEditor(index = -1) {
     document.getElementById('columnName').value = columns[index].name || '';
     document.getElementById('columnRule').value = columns[index].rule || '';
     document.getElementById('columnInputTable').value = columns[index].inputTable || '';
-    document.getElementById('columnOutputTable').value = columns[index].outputTable || '';
   } else {
     document.getElementById('columnEditorTitle').textContent = '添加列';
     document.getElementById('columnName').value = '';
     document.getElementById('columnRule').value = '';
     document.getElementById('columnInputTable').value = '';
-    document.getElementById('columnOutputTable').value = '';
   }
   document.getElementById('columnEditorModal').style.display = 'flex';
 }
@@ -1166,7 +1168,6 @@ function saveColumnFromEditor() {
     name: name,
     rule: document.getElementById('columnRule').value.trim(),
     inputTable: document.getElementById('columnInputTable').value.trim(),
-    outputTable: document.getElementById('columnOutputTable').value.trim(),
   };
 
   if (index >= 0) {
@@ -1920,10 +1921,10 @@ if (records.length === 0) {
     ],
     afterTable: 'merged_mh_dedup',
     dedupColumns: [
-      { id: "d_ex1", name: "去重前数量" },
-      { id: "d_ex2", name: "精确去重后数量" },
-      { id: "d_ex3", name: "50filter后数量" },
-      { id: "d_ex4", name: "MinHash去重后数量" },
+      { id: "d_ex1", name: "去重前", tableName: "merged_incremental" },
+      { id: "d_ex2", name: "第一次去重后", tableName: "merged_exact_dedup" },
+      { id: "d_ex3", name: "行去重_200ngram后", tableName: "merged_ngram200_dedup" },
+      { id: "d_ex4", name: "第二次去重后", tableName: "merged_mh_dedup" },
     ],
     dedupValues: {
       d_ex1: "50000000",
@@ -1937,10 +1938,10 @@ if (records.length === 0) {
     duration: '45',
     remark: '这是一条示例记录，展示各字段效果，可随时删除。',
     partitionColumns: [
-      { id: "col_raw", name: "原始数量", rule: "", inputTable: "merged_incremental", outputTable: "" },
-      { id: "col_row", name: "行去重后", rule: "url, content", inputTable: "merged_incremental", outputTable: "merged_row_dedup" },
-      { id: "col_exact", name: "精确去重后", rule: "content_hash", inputTable: "merged_row_dedup", outputTable: "merged_exact_dedup" },
-      { id: "col_mh", name: "MinHash去重后", rule: "minhash(sim=0.8)", inputTable: "merged_exact_dedup", outputTable: "merged_mh_dedup" },
+      { id: "col_raw", name: "原始数量", rule: "", inputTable: "merged_incremental" },
+      { id: "col_row", name: "行去重后", rule: "url, content", inputTable: "merged_incremental" },
+      { id: "col_exact", name: "精确去重后", rule: "content_hash", inputTable: "merged_row_dedup" },
+      { id: "col_mh", name: "MinHash去重后", rule: "minhash(sim=0.8)", inputTable: "merged_exact_dedup" },
     ],
     partitions: [
       { partition: "di=20260519", values: { col_raw: "12000000", col_row: "11000000", col_exact: "9800000", col_mh: "8500000" } },
