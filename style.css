@@ -600,6 +600,13 @@ body {
 /* 粘贴模式 */
 
 /* 数据类型切换 */
+.paste-target-wrap {
+  margin-bottom: 12px;
+  padding: 10px 16px;
+  background: var(--bg);
+  border-radius: var(--radius);
+}
+
 .paste-type-selector {
   display: flex;
   gap: 8px;

@@ -319,6 +319,7 @@ function saveRecord(event) {
     if (idx >= 0) {
       // 编辑时保留原有分区数据
       record.partitions = records[idx].partitions || [];
+      record.partitionColumns = records[idx].partitionColumns || [];
       records[idx] = record;
     }
   }
@@ -802,14 +803,17 @@ function refreshAll() {
 }
 
 // ============================================================
-// 分区详情管理
+// 分区详情管理（多阶段去重列）
 // ============================================================
 
-let currentPartitionRecordId = null;  // 当前正在管理分区的记录 ID
+let currentPartitionRecordId = null;
 let partitionSortField = 'partition';
 let partitionSortAsc = true;
+let selectedPartitionIndexes = new Set();
 
-/** 获取当前记录的分区数组（保证返回数组） */
+// ---- 数据存取 & 迁移 ----
+
+/** 获取记录的分区数组 */
 function getPartitions(recordId) {
   const r = records.find(x => x.id === recordId);
   if (!r) return [];
@@ -817,10 +821,77 @@ function getPartitions(recordId) {
   return r.partitions;
 }
 
-/** 打开分区管理弹窗 */
+/** 获取记录的列定义 */
+function getPartitionColumns(recordId) {
+  const r = records.find(x => x.id === recordId);
+  if (!r) return [];
+  if (!r.partitionColumns) r.partitionColumns = [];
+  return r.partitionColumns;
+}
+
+/** 旧格式迁移：{ partition, beforeCount, afterCount } → 新多列格式 */
+function migratePartitions(record) {
+  if (record.partitionColumns && record.partitionColumns.length > 0) return; // 已迁移
+  if (!record.partitions || record.partitions.length === 0) {
+    record.partitionColumns = [];
+    return;
+  }
+  // 检测旧格式
+  const first = record.partitions[0];
+  if (first && first.values) return; // 已是新格式
+
+  // 迁移：创建两列
+  const col1 = 'col_' + Date.now() + '_1';
+  const col2 = 'col_' + Date.now() + '_2';
+  record.partitionColumns = [
+    { id: col1, name: '去重前', rule: '', inputTable: '', outputTable: '' },
+    { id: col2, name: '去重后', rule: '', inputTable: '', outputTable: '' },
+  ];
+  record.partitions = record.partitions.map(p => ({
+    partition: p.partition,
+    values: { [col1]: p.beforeCount || '', [col2]: p.afterCount || '' },
+  }));
+}
+
+/** 生成列 ID */
+function genColId() {
+  return 'col_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+}
+
+/** 多阶段去重率计算
+ *  返回: { totalRate, stages: [{from, to, rate, drop}] }
+ *  totalRate = 第一列→最后一列的总去重率
+ *  stages = 每相邻列之间的阶段去重率
+ */
+function calcMultiStageRates(values, columns) {
+  if (!columns || columns.length < 2) return { totalRate: '', stages: [] };
+  const counts = columns.map(c => Number(values[c.id]) || 0);
+  const first = counts[0];
+  const last = counts[counts.length - 1];
+
+  const stages = [];
+  for (let i = 1; i < counts.length; i++) {
+    const prev = counts[i - 1];
+    const curr = counts[i];
+    if (prev > 0) {
+      const drop = prev - curr;
+      const rate = ((drop / prev) * 100).toFixed(2);
+      stages.push({ from: columns[i-1].name, to: columns[i].name, rate, drop });
+    } else {
+      stages.push({ from: columns[i-1].name, to: columns[i].name, rate: '', drop: '' });
+    }
+  }
+
+  const totalRate = first > 0 ? (((first - last) / first) * 100).toFixed(2) : '';
+  return { totalRate, stages };
+}
+
+// ---- 打开/关闭分区管理 ----
+
 function openPartitionManager(recordId) {
   currentPartitionRecordId = recordId;
   const r = records.find(x => x.id === recordId);
+  if (r) migratePartitions(r);
   document.getElementById('partitionModalTitle').textContent = r ? r.taskName : '';
   switchPartitionMode('list');
   partitionSortField = 'partition';
@@ -828,6 +899,7 @@ function openPartitionManager(recordId) {
   selectedPartitionIndexes.clear();
   cancelBatchDelete();
   document.getElementById('partitionSearch').value = '';
+  updatePasteColumnOptions();
   renderPartitionTable();
   document.getElementById('partitionModal').style.display = 'flex';
 }
@@ -838,67 +910,181 @@ function closePartitionManager() {
   refreshAll();
 }
 
-/** 分区弹窗内 Tab 切换 */
 function switchPartitionMode(mode) {
   document.querySelectorAll('.ptab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.textContent.includes(mode === 'list' ? '列表' : '粘贴'));
   });
   document.getElementById('partitionListMode').classList.toggle('active', mode === 'list');
   document.getElementById('partitionPasteMode').classList.toggle('active', mode === 'paste');
+  if (mode === 'paste') updatePasteColumnOptions();
 }
 
-/** 粘贴数据类型切换：before / after / both */
-let currentPasteType = 'before';
+// ---- 列管理 CRUD ----
 
-function switchPasteType(type) {
-  currentPasteType = type;
-  document.querySelectorAll('.ptype-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.pastetype === type);
-  });
+/** 打开列管理面板 */
+function openColumnManager() {
+  renderColumnManager();
+  document.getElementById('columnManagerModal').style.display = 'flex';
+}
 
-  const desc = document.getElementById('pasteTypeDesc');
-  const mergeLabel = document.getElementById('pasteMergeModeLabel');
-  const mergeSelect = document.getElementById('pasteImportMode');
+function closeColumnManager() {
+  document.getElementById('columnManagerModal').style.display = 'none';
+}
 
-  if (type === 'before') {
-    desc.innerHTML = '👆 先粘贴<strong>去重前表</strong>的全部分区数据，导入后再切到「去重后数据」粘贴。系统会按分区名自动合并。';
-    mergeLabel.style.display = 'inline-flex';
-    mergeSelect.innerHTML = '<option value="merge">合并（按分区名匹配，保留已有数据）</option><option value="replace">覆盖（清空后导入）</option>';
-  } else if (type === 'after') {
-    desc.innerHTML = '👆 现在粘贴<strong>去重后表</strong>的分区数据。已有的分区会自动填充去重后数量，重复率自动计算。新分区也会添加。';
-    mergeLabel.style.display = 'inline-flex';
-    mergeSelect.innerHTML = '<option value="merge">合并（按分区名匹配，保留已有数据）</option><option value="replace">覆盖（清空后导入）</option>';
-  } else {
-    desc.innerHTML = '🔀 每行包含<strong>去重前和去重后两个数量</strong>（如：<code>lang=xxx 5000000 4200000</code>），一次性导入完整对比数据。';
-    mergeLabel.style.display = 'inline-flex';
-    mergeSelect.innerHTML = '<option value="merge">合并（按分区名匹配，保留已有数据）</option><option value="replace">覆盖（清空后导入）</option>';
+/** 渲染列管理列表 */
+function renderColumnManager() {
+  const columns = getPartitionColumns(currentPartitionRecordId);
+  const tbody = document.getElementById('columnManagerBody');
+
+  if (columns.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-light);padding:20px;">暂无列，点击下方添加</td></tr>';
+    return;
   }
+
+  tbody.innerHTML = columns.map((col, i) => `
+    <tr>
+      <td><strong>${esc(col.name)}</strong></td>
+      <td>${esc(col.rule || '-')}</td>
+      <td class="table-flow">${esc(col.inputTable || '-')} <span class="arrow">→</span> ${esc(col.outputTable || '-')}</td>
+      <td class="action-col">
+        <button class="row-btn" title="上移" onclick="moveColumn(${i}, -1)" ${i === 0 ? 'disabled' : ''}>⬆</button>
+        <button class="row-btn" title="下移" onclick="moveColumn(${i}, 1)" ${i === columns.length - 1 ? 'disabled' : ''}>⬇</button>
+        <button class="row-btn" title="编辑" onclick="openColumnEditor(${i})">✏️</button>
+        <button class="row-btn delete" title="删除" onclick="deleteColumn(${i})">🗑</button>
+      </td>
+    </tr>
+  `).join('');
 }
 
-/** 渲染分区表格 + 汇总 */
+/** 打开列编辑器 */
+function openColumnEditor(index = -1) {
+  const columns = getPartitionColumns(currentPartitionRecordId);
+  document.getElementById('columnEditIndex').value = index;
+  if (index >= 0 && columns[index]) {
+    document.getElementById('columnEditorTitle').textContent = '编辑列';
+    document.getElementById('columnName').value = columns[index].name || '';
+    document.getElementById('columnRule').value = columns[index].rule || '';
+    document.getElementById('columnInputTable').value = columns[index].inputTable || '';
+    document.getElementById('columnOutputTable').value = columns[index].outputTable || '';
+  } else {
+    document.getElementById('columnEditorTitle').textContent = '添加列';
+    document.getElementById('columnName').value = '';
+    document.getElementById('columnRule').value = '';
+    document.getElementById('columnInputTable').value = '';
+    document.getElementById('columnOutputTable').value = '';
+  }
+  document.getElementById('columnEditorModal').style.display = 'flex';
+}
+
+function closeColumnEditor() {
+  document.getElementById('columnEditorModal').style.display = 'none';
+}
+
+/** 保存列 */
+function saveColumnFromEditor() {
+  const name = document.getElementById('columnName').value.trim();
+  if (!name) { showToast('⚠️ 请输入列名'); return; }
+
+  const index = Number(document.getElementById('columnEditIndex').value);
+  const columns = getPartitionColumns(currentPartitionRecordId);
+  const colData = {
+    id: index >= 0 ? columns[index].id : genColId(),
+    name: name,
+    rule: document.getElementById('columnRule').value.trim(),
+    inputTable: document.getElementById('columnInputTable').value.trim(),
+    outputTable: document.getElementById('columnOutputTable').value.trim(),
+  };
+
+  if (index >= 0) {
+    columns[index] = colData;
+  } else {
+    columns.push(colData);
+    // 给所有已有分区添加这个列的空值
+    const partitions = getPartitions(currentPartitionRecordId);
+    partitions.forEach(p => {
+      if (!p.values) p.values = {};
+      p.values[colData.id] = '';
+    });
+  }
+
+  saveRecords();
+  closeColumnEditor();
+  renderColumnManager();
+  updatePasteColumnOptions();
+  renderPartitionTable();
+  showToast(index >= 0 ? '✅ 列已更新' : '✅ 列已添加');
+}
+
+/** 删除列 */
+function deleteColumn(index) {
+  const columns = getPartitionColumns(currentPartitionRecordId);
+  const col = columns[index];
+  if (!col) return;
+  if (columns.length <= 1) { showToast('⚠️ 至少保留一列'); return; }
+
+  showConfirmInPartition(`确认删除列「${col.name}」？该列的所有分区数据将丢失。`, () => {
+    // 删除列定义
+    columns.splice(index, 1);
+    // 删除所有分区中该列的值
+    const partitions = getPartitions(currentPartitionRecordId);
+    partitions.forEach(p => {
+      if (p.values) delete p.values[col.id];
+    });
+    saveRecords();
+    renderColumnManager();
+    updatePasteColumnOptions();
+    renderPartitionTable();
+    showToast('🗑 列已删除');
+  });
+}
+
+/** 移动列顺序 */
+function moveColumn(index, direction) {
+  const columns = getPartitionColumns(currentPartitionRecordId);
+  const newIndex = index + direction;
+  if (newIndex < 0 || newIndex >= columns.length) return;
+  [columns[index], columns[newIndex]] = [columns[newIndex], columns[index]];
+  saveRecords();
+  renderColumnManager();
+  renderPartitionTable();
+}
+
+// ---- 分区表格渲染（动态列） ----
+
 function renderPartitionTable() {
   if (!currentPartitionRecordId) return;
+  const r = records.find(x => x.id === currentPartitionRecordId);
+  if (r) migratePartitions(r);
+  const columns = getPartitionColumns(currentPartitionRecordId);
   const partitions = getPartitions(currentPartitionRecordId);
   const search = document.getElementById('partitionSearch').value.toLowerCase().trim();
 
-  // 带重复率的完整数据
-  const enriched = partitions.map((p, i) => {
-    const { dupCount, dupRate } = calcDupStats(p.beforeCount, p.afterCount);
-    return { ...p, _index: i, dupCount, dupRate: Number(dupRate) || 0, dupRateStr: dupRate };
-  });
+  // 动态生成表头
+  const thead = document.getElementById('partitionTableHead');
+  const hasColumns = columns.length > 0;
+  const showTotalRate = columns.length >= 2;
+
+  thead.innerHTML = `<tr>
+    <th class="checkbox-col"><input type="checkbox" id="partitionSelectAll" onchange="toggleSelectAll(this)"></th>
+    <th onclick="sortPartitions('partition')" class="sortable">分区名 ↕</th>
+    ${columns.map(c => `<th onclick="sortPartitions('${c.id}')" class="sortable num-col">${esc(c.name)} ↕</th>`).join('')}
+    ${showTotalRate ? '<th class="num-col">总去重率</th>' : ''}
+    <th class="action-col">操作</th>
+  </tr>`;
 
   // 筛选
   const filtered = search
-    ? enriched.filter(p => (p.partition || '').toLowerCase().includes(search))
-    : enriched;
+    ? partitions.filter(p => (p.partition || '').toLowerCase().includes(search))
+    : [...partitions];
 
   // 排序
   filtered.sort((a, b) => {
-    let va = a[partitionSortField];
-    let vb = b[partitionSortField];
-    if (partitionSortField === 'beforeCount' || partitionSortField === 'afterCount' || partitionSortField === 'dupRate') {
-      va = Number(va) || 0;
-      vb = Number(vb) || 0;
+    let va, vb;
+    if (partitionSortField === 'partition') {
+      va = a.partition || ''; vb = b.partition || '';
+    } else {
+      va = Number((a.values || {})[partitionSortField]) || 0;
+      vb = Number((b.values || {})[partitionSortField]) || 0;
     }
     if (va < vb) return partitionSortAsc ? -1 : 1;
     if (va > vb) return partitionSortAsc ? 1 : -1;
@@ -906,17 +1092,9 @@ function renderPartitionTable() {
   });
 
   // 汇总
-  const totalBefore = enriched.reduce((s, p) => s + (Number(p.beforeCount) || 0), 0);
-  const totalAfter = enriched.reduce((s, p) => s + (Number(p.afterCount) || 0), 0);
-  const avgRate = totalBefore > 0 ? (((totalBefore - totalAfter) / totalBefore) * 100).toFixed(2) : '0';
-  document.getElementById('partitionSummary').innerHTML = `
-    <div class="sum-item"><span class="sum-label">分区数：</span><span class="sum-value">${enriched.length}</span></div>
-    <div class="sum-item"><span class="sum-label">总去重前：</span><span class="sum-value">${formatNum(totalBefore)}</span></div>
-    <div class="sum-item"><span class="sum-label">总去重后：</span><span class="sum-value">${formatNum(totalAfter)}</span></div>
-    <div class="sum-item"><span class="sum-label">平均重复率：</span><span class="sum-value ${getDupRateClass(Number(avgRate))}">${avgRate}%</span></div>
-  `;
+  renderPartitionSummary(partitions, columns);
 
-  // 表格
+  // 表格体
   const tbody = document.getElementById('partitionTableBody');
   const emptyEl = document.getElementById('partitionEmpty');
   const tableEl = document.querySelector('.partition-table');
@@ -925,6 +1103,7 @@ function renderPartitionTable() {
     tbody.innerHTML = '';
     tableEl.style.display = 'none';
     emptyEl.style.display = 'block';
+    emptyEl.querySelector('p').textContent = hasColumns ? '暂无分区数据，点击「新增分区」或切换到「粘贴导入」' : '请先点击「⚙ 管理列」添加去重阶段列';
     updateSelectionUI();
     return;
   }
@@ -932,103 +1111,118 @@ function renderPartitionTable() {
   emptyEl.style.display = 'none';
 
   tbody.innerHTML = filtered.map(p => {
-    const dupCountDisplay = p.dupCount !== '' ? formatNum(p.dupCount) : '-';
-    const dupRateDisplay = p.dupRateStr !== '' ? `${p.dupRateStr}%` : '-';
-    const isChecked = selectedPartitionIndexes.has(p._index);
+    const realIndex = partitions.indexOf(p);
+    const isChecked = selectedPartitionIndexes.has(realIndex);
+    const values = p.values || {};
+    const { totalRate } = calcMultiStageRates(values, columns);
+    const totalRateDisplay = totalRate !== '' ? `${totalRate}%` : '-';
     return `
       <tr class="${isChecked ? 'selected-row' : ''}">
-        <td class="checkbox-col"><input type="checkbox" data-index="${p._index}" ${isChecked ? 'checked' : ''} onchange="toggleSelectPartition(${p._index}, this.checked)"></td>
+        <td class="checkbox-col"><input type="checkbox" data-index="${realIndex}" ${isChecked ? 'checked' : ''} onchange="toggleSelectPartition(${realIndex}, this.checked)"></td>
         <td class="partition-name">${esc(p.partition || '-')}</td>
-        <td class="num-col">${p.beforeCount ? formatNum(p.beforeCount) : '-'}</td>
-        <td class="num-col">${p.afterCount ? formatNum(p.afterCount) : '-'}</td>
-        <td class="num-col">${dupCountDisplay}</td>
-        <td class="num-col"><span class="${getDupRateClass(p.dupRate)}">${dupRateDisplay}</span></td>
+        ${columns.map(c => `<td class="num-col">${values[c.id] ? formatNum(values[c.id]) : '-'}</td>`).join('')}
+        ${showTotalRate ? `<td class="num-col"><span class="${getDupRateClass(Number(totalRate))}">${totalRateDisplay}</span></td>` : ''}
         <td class="action-col">
-          <button class="row-btn" title="编辑" onclick="openPartitionEditor(${p._index})">✏️</button>
-          <button class="row-btn delete" title="删除" onclick="deletePartition(${p._index})">🗑</button>
+          <button class="row-btn" title="编辑" onclick="openPartitionEditor(${realIndex})">✏️</button>
+          <button class="row-btn delete" title="删除" onclick="deletePartition(${realIndex})">🗑</button>
         </td>
       </tr>
     `;
   }).join('');
 
-  // 更新全选框状态
+  // 全选框状态
   const selectAllCheckbox = document.getElementById('partitionSelectAll');
-  const visibleIndexes = filtered.map(p => p._index);
-  const allSelected = visibleIndexes.length > 0 && visibleIndexes.every(i => selectedPartitionIndexes.has(i));
-  selectAllCheckbox.checked = allSelected;
-
+  if (selectAllCheckbox) {
+    const allSelected = partitions.length > 0 && partitions.every((_, i) => selectedPartitionIndexes.has(i));
+    selectAllCheckbox.checked = allSelected;
+  }
   updateSelectionUI();
 }
 
-// ============================================================
-// 分区选择 & 批量删除
-// ============================================================
-
-let selectedPartitionIndexes = new Set(); // 当前选中的分区 index 集合
-
-/** 单个复选框切换 */
-function toggleSelectPartition(index, checked) {
-  if (checked) {
-    selectedPartitionIndexes.add(index);
-  } else {
-    selectedPartitionIndexes.delete(index);
+/** 渲染分区汇总 */
+function renderPartitionSummary(partitions, columns) {
+  const summary = document.getElementById('partitionSummary');
+  if (columns.length === 0) {
+    summary.innerHTML = '<div class="sum-item"><span class="sum-label">尚未定义列，请点击「⚙ 管理列」</span></div>';
+    return;
   }
-  // 只更新 UI 状态，不重新渲染整个表格（避免闪烁）
+
+  // 每列的汇总
+  const colSums = columns.map(c => {
+    const total = partitions.reduce((s, p) => s + (Number((p.values || {})[c.id]) || 0), 0);
+    return `<div class="sum-item"><span class="sum-label">${esc(c.name)}：</span><span class="sum-value">${formatNum(total)}</span></div>`;
+  }).join('');
+
+  // 总去重率
+  let rateHtml = '';
+  if (columns.length >= 2) {
+    const firstCol = columns[0];
+    const lastCol = columns[columns.length - 1];
+    const totalFirst = partitions.reduce((s, p) => s + (Number((p.values || {})[firstCol.id]) || 0), 0);
+    const totalLast = partitions.reduce((s, p) => s + (Number((p.values || {})[lastCol.id]) || 0), 0);
+    const avgRate = totalFirst > 0 ? (((totalFirst - totalLast) / totalFirst) * 100).toFixed(2) : '0';
+    rateHtml = `<div class="sum-item"><span class="sum-label">平均总去重率：</span><span class="sum-value ${getDupRateClass(Number(avgRate))}">${avgRate}%</span></div>`;
+  }
+
+  summary.innerHTML = `
+    <div class="sum-item"><span class="sum-label">分区数：</span><span class="sum-value">${partitions.length}</span></div>
+    ${colSums}
+    ${rateHtml}
+  `;
+}
+
+function sortPartitions(field) {
+  if (partitionSortField === field) {
+    partitionSortAsc = !partitionSortAsc;
+  } else {
+    partitionSortField = field;
+    partitionSortAsc = (field === 'partition');
+  }
+  renderPartitionTable();
+}
+
+// ---- 选择 & 批量删除 ----
+
+function toggleSelectPartition(index, checked) {
+  if (checked) { selectedPartitionIndexes.add(index); } else { selectedPartitionIndexes.delete(index); }
   const row = document.querySelector(`input[data-index="${index}"]`)?.closest('tr');
   if (row) row.classList.toggle('selected-row', checked);
   updateSelectionUI();
-  // 更新全选框
   const selectAllCheckbox = document.getElementById('partitionSelectAll');
   const partitions = getPartitions(currentPartitionRecordId);
   const allSelected = partitions.length > 0 && partitions.every((_, i) => selectedPartitionIndexes.has(i));
-  selectAllCheckbox.checked = allSelected;
+  if (selectAllCheckbox) selectAllCheckbox.checked = allSelected;
 }
 
-/** 全选/反全选 */
 function toggleSelectAll(checkbox) {
   const partitions = getPartitions(currentPartitionRecordId);
   const search = document.getElementById('partitionSearch').value.toLowerCase().trim();
-
   if (checkbox.checked) {
-    // 选中当前筛选结果中的所有分区
     partitions.forEach((p, i) => {
-      if (!search || (p.partition || '').toLowerCase().includes(search)) {
-        selectedPartitionIndexes.add(i);
-      }
+      if (!search || (p.partition || '').toLowerCase().includes(search)) selectedPartitionIndexes.add(i);
     });
   } else {
-    // 取消当前筛选结果中的选中
     partitions.forEach((p, i) => {
-      if (!search || (p.partition || '').toLowerCase().includes(search)) {
-        selectedPartitionIndexes.delete(i);
-      }
+      if (!search || (p.partition || '').toLowerCase().includes(search)) selectedPartitionIndexes.delete(i);
     });
   }
   renderPartitionTable();
 }
 
-/** 更新选择相关的 UI（已选数量、批量删除按钮等） */
 function updateSelectionUI() {
   const count = selectedPartitionIndexes.size;
-  const countBadge = document.getElementById('partitionSelectedCount');
-  const batchBtn = document.getElementById('batchDeleteBtn');
-  const clearBtn = document.getElementById('clearSelectionBtn');
-
-  countBadge.style.display = count > 0 ? 'inline-block' : 'none';
-  countBadge.textContent = `已选 ${count} 项`;
-
-  batchBtn.style.display = count > 0 ? 'inline-flex' : 'none';
-  clearBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+  document.getElementById('partitionSelectedCount').style.display = count > 0 ? 'inline-block' : 'none';
+  document.getElementById('partitionSelectedCount').textContent = `已选 ${count} 项`;
+  document.getElementById('batchDeleteBtn').style.display = count > 0 ? 'inline-flex' : 'none';
+  document.getElementById('clearSelectionBtn').style.display = count > 0 ? 'inline-flex' : 'none';
 }
 
-/** 清空选择 */
 function clearPartitionSelection() {
   selectedPartitionIndexes.clear();
   cancelBatchDelete();
   renderPartitionTable();
 }
 
-/** 显示批量删除内联确认 */
 function showBatchDeleteConfirm() {
   const count = selectedPartitionIndexes.size;
   if (count === 0) return;
@@ -1038,18 +1232,15 @@ function showBatchDeleteConfirm() {
   bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-/** 取消批量删除确认 */
 function cancelBatchDelete() {
-  document.getElementById('batchDeleteConfirmBar').style.display = 'none';
+  const bar = document.getElementById('batchDeleteConfirmBar');
+  if (bar) bar.style.display = 'none';
 }
 
-/** 执行批量删除 */
 function executeBatchDelete() {
   const partitions = getPartitions(currentPartitionRecordId);
-  // 按 index 从大到小排序，避免删除时索引错位
   const sortedIndexes = [...selectedPartitionIndexes].sort((a, b) => b - a);
   sortedIndexes.forEach(i => partitions.splice(i, 1));
-
   saveRecords();
   selectedPartitionIndexes.clear();
   cancelBatchDelete();
@@ -1057,44 +1248,57 @@ function executeBatchDelete() {
   showToast(`🗑 已删除 ${sortedIndexes.length} 个分区`);
 }
 
-/** 分区排序 */
-function sortPartitions(field) {
-  if (partitionSortField === field) {
-    partitionSortAsc = !partitionSortAsc;
-  } else {
-    partitionSortField = field;
-    // 分区名(字符串)默认升序，数值字段默认降序（大的在前）
-    partitionSortAsc = (field === 'partition');
+/** 分区弹窗内的内联确认（不弹遮罩） */
+function showConfirmInPartition(message, onConfirm) {
+  const bar = document.getElementById('batchDeleteConfirmBar');
+  document.getElementById('batchDeleteMessage').textContent = message;
+  bar.style.display = 'flex';
+  bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // 临时替换确认按钮的行为
+  const oldBtn = document.getElementById('inlineConfirmExecuteBtn');
+  if (oldBtn) {
+    const newBtn = oldBtn.cloneNode(true);
+    newBtn.id = 'inlineConfirmExecuteBtn';
+    newBtn.onclick = () => { onConfirm(); cancelBatchDelete(); };
+    oldBtn.parentNode.replaceChild(newBtn, oldBtn);
   }
-  renderPartitionTable();
 }
 
-// ============================================================
-// 单条分区增删改
-// ============================================================
+// ---- 单条分区增删改（动态字段） ----
 
-/** 打开单条分区编辑弹窗 */
 function openPartitionEditor(index = -1) {
+  const columns = getPartitionColumns(currentPartitionRecordId);
+  if (columns.length === 0) {
+    showToast('⚠️ 请先在「⚙ 管理列」中添加列');
+    openColumnManager();
+    return;
+  }
+
   document.getElementById('partitionEditIndex').value = index;
+
+  // 动态生成字段
+  const fieldsContainer = document.getElementById('partitionEditorFields');
   if (index >= 0) {
     const partitions = getPartitions(currentPartitionRecordId);
     const p = partitions[index];
-    if (!p) return;
     document.getElementById('partitionEditorTitle').textContent = '编辑分区';
     document.getElementById('partitionName').value = p.partition || '';
-    document.getElementById('partitionBefore').value = p.beforeCount || '';
-    document.getElementById('partitionAfter').value = p.afterCount || '';
+    fieldsContainer.innerHTML = columns.map(c => `
+      <div class="form-group num-input-group">
+        <label>${esc(c.name)}</label>
+        <input type="number" class="partition-col-input" data-colid="${c.id}" value="${esc((p.values || {})[c.id] || '')}" placeholder="数量">
+      </div>
+    `).join('');
   } else {
     document.getElementById('partitionEditorTitle').textContent = '新增分区';
     document.getElementById('partitionName').value = '';
-    document.getElementById('partitionBefore').value = '';
-    document.getElementById('partitionAfter').value = '';
+    fieldsContainer.innerHTML = columns.map(c => `
+      <div class="form-group num-input-group">
+        <label>${esc(c.name)}</label>
+        <input type="number" class="partition-col-input" data-colid="${c.id}" value="" placeholder="数量">
+      </div>
+    `).join('');
   }
-  document.getElementById('partitionBeforeHint').textContent = '';
-  document.getElementById('partitionAfterHint').textContent = '';
-  document.getElementById('partitionDupCount').value = '';
-  document.getElementById('partitionDupRate').value = '';
-  calcPartitionDup();
   document.getElementById('partitionEditorModal').style.display = 'flex';
 }
 
@@ -1102,30 +1306,21 @@ function closePartitionEditor() {
   document.getElementById('partitionEditorModal').style.display = 'none';
 }
 
-/** 计算单条分区重复率（编辑弹窗内实时计算） */
-function calcPartitionDup() {
-  const before = document.getElementById('partitionBefore').value;
-  const after = document.getElementById('partitionAfter').value;
-  document.getElementById('partitionBeforeHint').textContent = before ? `≈ ${formatNum(before)}` : '';
-  document.getElementById('partitionAfterHint').textContent = after ? `≈ ${formatNum(after)}` : '';
-  const { dupCount, dupRate } = calcDupStats(before, after);
-  document.getElementById('partitionDupCount').value = dupCount !== '' ? formatNum(dupCount) : '';
-  document.getElementById('partitionDupRate').value = dupRate !== '' ? `${dupRate}%` : '';
-}
-
-/** 保存单条分区 */
 function savePartitionFromEditor() {
   const name = document.getElementById('partitionName').value.trim();
   if (!name) { showToast('⚠️ 请输入分区名'); return; }
 
   const index = Number(document.getElementById('partitionEditIndex').value);
   const partitions = getPartitions(currentPartitionRecordId);
+  const columns = getPartitionColumns(currentPartitionRecordId);
 
-  const partitionData = {
-    partition: name,
-    beforeCount: document.getElementById('partitionBefore').value.trim(),
-    afterCount: document.getElementById('partitionAfter').value.trim(),
-  };
+  // 收集动态字段
+  const values = {};
+  document.querySelectorAll('.partition-col-input').forEach(input => {
+    values[input.dataset.colid] = input.value.trim();
+  });
+
+  const partitionData = { partition: name, values };
 
   if (index >= 0 && index < partitions.length) {
     partitions[index] = partitionData;
@@ -1139,68 +1334,73 @@ function savePartitionFromEditor() {
   showToast(index >= 0 ? '✅ 分区已更新' : '✅ 分区已添加');
 }
 
-/** 删除单条分区（内联确认，不弹遮罩） */
 function deletePartition(index) {
   const partitions = getPartitions(currentPartitionRecordId);
   const p = partitions[index];
   if (!p) return;
-
-  // 单条删除复用批量删除的内联确认条
   selectedPartitionIndexes.clear();
   selectedPartitionIndexes.add(index);
-  cancelBatchDelete();  // 先清除之前可能存在的确认条
-
+  cancelBatchDelete();
   const bar = document.getElementById('batchDeleteConfirmBar');
   document.getElementById('batchDeleteMessage').textContent = `⚠️ 确认删除分区「${p.partition}」？此操作不可撤销。`;
   bar.style.display = 'flex';
   bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-// ============================================================
-// 粘贴导入
-// ============================================================
+// ---- 粘贴导入（动态目标列） ----
 
-/**
- * 清理数字字符串：去掉千分位逗号、空格、单位等，只保留数字
- * "2,939,500,888" → "2939500888"
- * "6.11 TB" → "6.11"（但这是大小不是行数，由调用方判断）
- */
+let currentPasteType = 'target'; // target | multi
+
+function switchPasteType(type) {
+  currentPasteType = type;
+  document.querySelectorAll('.ptype-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.pastetype === type);
+  });
+  const desc = document.getElementById('pasteTypeDesc');
+  const targetSelector = document.getElementById('pasteTargetColumnWrap');
+  if (type === 'target') {
+    desc.innerHTML = '👆 选择一个<strong>目标列</strong>，粘贴的数据会写入该列（按分区名合并）。可多次粘贴到不同列。';
+    targetSelector.style.display = 'inline-flex';
+  } else {
+    desc.innerHTML = '🔀 每行包含<strong>多列数量</strong>，按列顺序自动匹配到各阶段列。适合一次性粘贴完整数据。';
+    targetSelector.style.display = 'none';
+  }
+  updatePasteColumnOptions();
+}
+
+/** 更新粘贴目标列下拉选项 */
+function updatePasteColumnOptions() {
+  const columns = getPartitionColumns(currentPartitionRecordId);
+  const select = document.getElementById('pasteTargetColumn');
+  if (!select) return;
+  select.innerHTML = columns.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+}
+
 function cleanNumber(str) {
   if (!str) return '';
-  // 去掉千分位逗号（数字间的逗号）
   let s = str.replace(/(\d),(?=\d{3})/g, '$1');
-  // 提取第一个数字部分
   const match = s.match(/[\d,]+(\.\d+)?/);
   return match ? match[0].replace(/,/g, '') : '';
 }
 
-/**
- * 判断字符串是否为数字（含千分位）
- */
 function isNumericLike(str) {
   if (!str) return false;
   const cleaned = str.replace(/,/g, '').trim();
   return /^\d+(\.\d+)?$/.test(cleaned);
 }
 
-/**
- * 解析粘贴的文本，智能识别格式
- * 支持三种格式：
- * 1. 横排多列（TSV/CSV/空格）：每行一条，列 = 分区名 + 数量(+数量)
- * 2. 竖排多行：每 N 行一条（分区名/数量/大小/时间/时间 各占一行）
- * 3. 混合格式
- */
 function parseAndImportPartitions() {
   const text = document.getElementById('partitionPasteArea').value.trim();
   if (!text) { showToast('⚠️ 请先粘贴数据'); return; }
 
+  const columns = getPartitionColumns(currentPartitionRecordId);
+  if (columns.length === 0) { showToast('⚠️ 请先在「⚙ 管理列」中添加列'); return; }
+
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
   if (lines.length === 0) { showToast('⚠️ 没有有效数据'); return; }
 
-  // 判断是横排还是竖排
   const firstLine = lines[0];
   const isHorizontal = checkHorizontalFormat(firstLine);
-
   let parsed = [];
   let skippedHeader = false;
 
@@ -1212,70 +1412,81 @@ function parseAndImportPartitions() {
     parsed = parseVerticalFormat(lines);
   }
 
-  if (parsed.length === 0) {
-    showToast('⚠️ 未能解析出有效数据，请检查格式');
-    return;
-  }
+  if (parsed.length === 0) { showToast('⚠️ 未能解析出有效数据'); return; }
 
   const importMode = document.getElementById('pasteImportMode').value;
   const partitions = getPartitions(currentPartitionRecordId);
-
-  // 根据粘贴类型决定写入哪个字段
-  // before = 只写 beforeCount；after = 只写 afterCount；both = 写前后两个
   let stats = { imported: 0, merged: 0, newAdded: 0 };
 
-  if (importMode === 'replace') {
-    partitions.length = 0;  // 覆盖模式：清空
-    parsed.forEach(p => {
-      const newPart = { partition: p.partition, beforeCount: '', afterCount: '' };
-      if (currentPasteType === 'before') { newPart.beforeCount = p.beforeCount; newPart.afterCount = p.afterCount; }
-      else if (currentPasteType === 'after') { newPart.afterCount = p.beforeCount; }
-      else { newPart.beforeCount = p.beforeCount; newPart.afterCount = p.afterCount; }
-      // both 模式且只有一个数量：before=after
-      if (currentPasteType === 'both' && p.afterCount === p.beforeCount) {
-        newPart.beforeCount = p.beforeCount;
-        newPart.afterCount = p.beforeCount;
-      }
-      partitions.push(newPart);
-      stats.imported++;
-    });
-  } else {
-    // 合并模式：按分区名匹配
-    // 建立 partition name → index 的映射
-    const partMap = {};
-    partitions.forEach((p, i) => {
-      if (p.partition) partMap[p.partition] = i;
-    });
+  if (currentPasteType === 'target') {
+    // 贴入到指定列
+    const targetColId = document.getElementById('pasteTargetColumn').value;
+    if (!targetColId) { showToast('⚠️ 请选择目标列'); return; }
 
-    parsed.forEach(p => {
-      const name = p.partition;
-      if (partMap.hasOwnProperty(name)) {
-        // 已存在：合并写入对应字段
-        const existing = partitions[partMap[name]];
-        if (currentPasteType === 'before') {
-          existing.beforeCount = p.beforeCount;
-        } else if (currentPasteType === 'after') {
-          existing.afterCount = p.beforeCount;  // 竖排/单列时 beforeCount 存的就是唯一数量
+    if (importMode === 'replace') {
+      partitions.length = 0;
+      parsed.forEach(p => {
+        partitions.push({ partition: p.partition, values: { [targetColId]: p.beforeCount } });
+        stats.imported++;
+      });
+    } else {
+      const partMap = {};
+      partitions.forEach((p, i) => { if (p.partition) partMap[p.partition] = i; });
+
+      parsed.forEach(p => {
+        if (partMap.hasOwnProperty(p.partition)) {
+          const existing = partitions[partMap[p.partition]];
+          if (!existing.values) existing.values = {};
+          existing.values[targetColId] = p.beforeCount;
+          stats.merged++;
         } else {
-          existing.beforeCount = p.beforeCount;
-          existing.afterCount = p.afterCount;
+          const newPart = { partition: p.partition, values: {} };
+          columns.forEach(c => { newPart.values[c.id] = ''; });
+          newPart.values[targetColId] = p.beforeCount;
+          partitions.push(newPart);
+          partMap[p.partition] = partitions.length - 1;
+          stats.newAdded++;
         }
-        stats.merged++;
-      } else {
-        // 新分区
-        const newPart = { partition: name, beforeCount: '', afterCount: '' };
-        if (currentPasteType === 'before') { newPart.beforeCount = p.beforeCount; newPart.afterCount = p.afterCount; }
-        else if (currentPasteType === 'after') { newPart.afterCount = p.beforeCount; }
-        else { newPart.beforeCount = p.beforeCount; newPart.afterCount = p.afterCount; }
-        if (currentPasteType === 'both' && p.afterCount === p.beforeCount) {
-          newPart.afterCount = p.beforeCount;
+        stats.imported++;
+      });
+    }
+  } else {
+    // 多列模式：按顺序匹配
+    if (importMode === 'replace') {
+      partitions.length = 0;
+      parsed.forEach(p => {
+        const values = {};
+        columns.forEach((c, ci) => {
+          if (ci === 0) values[c.id] = p.beforeCount;
+          else if (ci === 1) values[c.id] = p.afterCount;
+        });
+        partitions.push({ partition: p.partition, values });
+        stats.imported++;
+      });
+    } else {
+      const partMap = {};
+      partitions.forEach((p, i) => { if (p.partition) partMap[p.partition] = i; });
+
+      parsed.forEach(p => {
+        let existing;
+        if (partMap.hasOwnProperty(p.partition)) {
+          existing = partitions[partMap[p.partition]];
+          stats.merged++;
+        } else {
+          existing = { partition: p.partition, values: {} };
+          columns.forEach(c => { existing.values[c.id] = ''; });
+          partitions.push(existing);
+          partMap[p.partition] = partitions.length - 1;
+          stats.newAdded++;
         }
-        partitions.push(newPart);
-        partMap[name] = partitions.length - 1;
-        stats.newAdded++;
-      }
-      stats.imported++;
-    });
+        if (!existing.values) existing.values = {};
+        columns.forEach((c, ci) => {
+          if (ci === 0 && p.beforeCount) existing.values[c.id] = p.beforeCount;
+          if (ci === 1 && p.afterCount) existing.values[c.id] = p.afterCount;
+        });
+        stats.imported++;
+      });
+    }
   }
 
   saveRecords();
@@ -1283,34 +1494,23 @@ function parseAndImportPartitions() {
   document.getElementById('partitionPasteArea').value = '';
 
   const headerNote = skippedHeader ? '（已跳过表头）' : '';
-  let msg;
-  if (importMode === 'replace') {
-    msg = `✅ 覆盖导入 ${stats.imported} 个分区${headerNote}`;
-  } else {
-    msg = `✅ 导入完成：合并 ${stats.merged} 个，新增 ${stats.newAdded} 个${headerNote}`;
-  }
+  let msg = importMode === 'replace'
+    ? `✅ 覆盖导入 ${stats.imported} 个分区${headerNote}`
+    : `✅ 导入完成：合并 ${stats.merged} 个，新增 ${stats.newAdded} 个${headerNote}`;
   showToast(msg);
 }
 
-/**
- * 检测第一行是否为横排多列格式
- */
 function checkHorizontalFormat(line) {
-  // 包含 Tab 或逗号，且拆分后至少 2 列
   if (line.includes('\t')) {
     const cols = line.split('\t').filter(c => c.trim());
     return cols.length >= 2;
   }
-  // 注意：逗号可能是千分位（如 2,939,500,888），需要检查拆分后第二列是否为数字
-  if (line.includes(',')) {
-    const cols = line.split(',').map(c => c.trim());
-    // 如果只有一列（逗号是千分位），不是真正的 CSV
-    // 如果多列且第二列是数字，可能是 CSV
+  if (line.includes(',') && isNumericLike(line.split(',')[1])) {
+    const cols = line.split(',');
     if (cols.length >= 2 && isNumericLike(cols[1])) return true;
     if (cols.length >= 3 && isNumericLike(cols[2])) return true;
     return false;
   }
-  // 多空格分隔（如 "di=20260519  5000000  4200000"）
   if (/\s{2,}/.test(line) || (/=/.test(line) && /\s/.test(line))) {
     const cols = line.split(/\s+/).filter(c => c);
     return cols.length >= 2;
@@ -1318,159 +1518,157 @@ function checkHorizontalFormat(line) {
   return false;
 }
 
-/**
- * 解析横排格式：每行一条记录
- */
 function parseHorizontalFormat(lines) {
   const parsed = [];
   let skippedHeader = false;
-
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line) continue;
-
-    // 智能拆列
     let cols;
-    if (line.includes('\t')) {
-      cols = line.split('\t');
-    } else if (line.includes(',') && isNumericLike(line.split(',')[1])) {
-      cols = line.split(',');
-    } else {
-      cols = line.split(/\s+/);
-    }
+    if (line.includes('\t')) { cols = line.split('\t'); }
+    else if (line.includes(',') && isNumericLike(line.split(',')[1])) { cols = line.split(','); }
+    else { cols = line.split(/\s+/); }
     cols = cols.map(c => c.trim()).filter(c => c !== '');
-
     if (cols.length < 2) continue;
-
-    // 跳过表头（第二列不是数字）
-    if (i === 0 && !isNumericLike(cols[1])) {
-      skippedHeader = true;
-      continue;
-    }
-
+    if (i === 0 && !isNumericLike(cols[1])) { skippedHeader = true; continue; }
     const partition = cols[0];
     const beforeCount = cleanNumber(cols[1]);
-    // 第三列如果存在且是数字，作为 afterCount；否则 after = before
     let afterCount = beforeCount;
-    if (cols.length >= 3 && isNumericLike(cols[2])) {
-      afterCount = cleanNumber(cols[2]);
-    }
-
+    if (cols.length >= 3 && isNumericLike(cols[2])) afterCount = cleanNumber(cols[2]);
     parsed.push({ partition, beforeCount, afterCount });
   }
   return { parsed, skippedHeader };
 }
 
-/**
- * 解析竖排格式：每 N 行一条记录
- * 典型场景：从 MaxCompute 表格视图复制，每个字段占一行
- * 格式：分区名 / 数量 / 大小 / 时间 / 时间 （重复）
- */
 function parseVerticalFormat(lines) {
   const parsed = [];
-
-  // 策略：识别以 xxx= 开头的行为「分区名」行，
-  // 紧跟其后的第一个数字行为「数量」
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
-    // 匹配分区名模式：xxx=yyy（如 lang=vie_Latn, di=20260519, dt=202606）
     if (/^\w+=.+/.test(line)) {
       const partition = line.trim();
-
-      // 向后查找最近的数字行（跳过大小、时间等非纯数字行）
       let count = '';
       for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
-        const nextLine = lines[j].trim();
-        // 遇到下一个分区名就停
-        if (/^\w+=.+/.test(nextLine)) break;
-        // 找到纯数字行（含千分位）
-        if (isNumericLike(nextLine)) {
-          count = cleanNumber(nextLine);
-          break;
-        }
+        if (/^\w+=.+/.test(lines[j])) break;
+        if (isNumericLike(lines[j])) { count = cleanNumber(lines[j]); break; }
       }
-
-      if (count) {
-        // 竖排格式通常只有「数量」，没有去重前后之分，所以 before = after
-        parsed.push({ partition, beforeCount: count, afterCount: count });
-      }
+      if (count) parsed.push({ partition, beforeCount: count, afterCount: count });
     }
   }
   return parsed;
 }
 
-// ============================================================
-// 导出分区 Excel
-// ============================================================
+// ---- 导出分区 Excel（动态列 + 阶段去重率） ----
 
 function exportPartitionExcel() {
   if (!currentPartitionRecordId) return;
+  const r = records.find(x => x.id === currentPartitionRecordId);
+  if (r) migratePartitions(r);
+  const columns = getPartitionColumns(currentPartitionRecordId);
   const partitions = getPartitions(currentPartitionRecordId);
   if (partitions.length === 0) { showToast('⚠️ 没有分区数据可导出'); return; }
 
-  const r = records.find(x => x.id === currentPartitionRecordId);
   const taskName = r ? r.taskName : '记录';
+  const showTotalRate = columns.length >= 2;
 
-  const headers = ['分区名', '去重前数量', '去重后数量', '重复数量', '重复率(%)'];
+  // 表头
+  let headers = ['分区名', ...columns.map(c => c.name)];
+  if (showTotalRate) headers.push('总去重率(%)');
+  // 阶段间去重率列
+  if (columns.length >= 2) {
+    for (let i = 1; i < columns.length; i++) {
+      headers.push(`${columns[i-1].name}→${columns[i].name}去重率(%)`);
+    }
+  }
 
+  // 数据行
   const rows = partitions.map(p => {
-    const { dupCount, dupRate } = calcDupStats(p.beforeCount, p.afterCount);
-    return `<tr>
-      <td>${esc(p.partition || '')}</td>
-      <td>${esc(p.beforeCount || '')}</td>
-      <td>${esc(p.afterCount || '')}</td>
-      <td>${dupCount}</td>
-      <td>${dupRate}</td>
-    </tr>`;
+    const values = p.values || {};
+    const { totalRate, stages } = calcMultiStageRates(values, columns);
+    let cells = [p.partition || ''];
+    columns.forEach(c => cells.push(values[c.id] || ''));
+    if (showTotalRate) cells.push(totalRate);
+    if (columns.length >= 2) stages.forEach(s => cells.push(s.rate));
+    return '<tr>' + cells.map(c => `<td>${esc(String(c))}</td>`).join('') + '</tr>';
   }).join('');
 
   // 汇总行
-  const totalBefore = partitions.reduce((s, p) => s + (Number(p.beforeCount) || 0), 0);
-  const totalAfter = partitions.reduce((s, p) => s + (Number(p.afterCount) || 0), 0);
-  const { dupCount: totalDup, dupRate: avgRate } = calcDupStats(totalBefore, totalAfter);
-  const summaryRow = `<tr style="font-weight:bold;background:#e0e7ff;">
-    <td>汇总</td><td>${totalBefore}</td><td>${totalAfter}</td><td>${totalDup}</td><td>${avgRate}</td>
-  </tr>`;
+  const sums = [];
+  sums.push('汇总');
+  columns.forEach(c => {
+    sums.push(partitions.reduce((s, p) => s + (Number((p.values || {})[c.id]) || 0), 0));
+  });
+  if (showTotalRate) {
+    const firstCol = columns[0], lastCol = columns[columns.length - 1];
+    const tF = partitions.reduce((s, p) => s + (Number((p.values || {})[firstCol.id]) || 0), 0);
+    const tL = partitions.reduce((s, p) => s + (Number((p.values || {})[lastCol.id]) || 0), 0);
+    sums.push(tF > 0 ? ((tF - tL) / tF * 100).toFixed(2) : '');
+  }
+  if (columns.length >= 2) {
+    for (let i = 1; i < columns.length; i++) {
+      const prevSum = partitions.reduce((s, p) => s + (Number((p.values || {})[columns[i-1].id]) || 0), 0);
+      const currSum = partitions.reduce((s, p) => s + (Number((p.values || {})[columns[i].id]) || 0), 0);
+      sums.push(prevSum > 0 ? ((prevSum - currSum) / prevSum * 100).toFixed(2) : '');
+    }
+  }
+  const summaryRow = `<tr style="font-weight:bold;background:#e0e7ff;">${sums.map(s => `<td>${esc(String(s))}</td>`).join('')}</tr>`;
 
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
-    <head><meta charset="UTF-8"></head>
-    <body>
-      <h3>${esc(taskName)} — 分区明细</h3>
-      <table border="1">
-        <tr>${headers.map(h => `<th style="background:#4f46e5;color:white;">${h}</th>`).join('')}</tr>
-        ${rows}${summaryRow}
-      </table>
-    </body>
-  </html>`;
+    <head><meta charset="UTF-8"></head><body>
+    <h3>${esc(taskName)} — 分区明细</h3>
+    <table border="1"><tr>${headers.map(h => `<th style="background:#4f46e5;color:white;">${esc(h)}</th>`).join('')}</tr>${rows}${summaryRow}</table>
+    </body></html>`;
 
-  const filename = `${taskName}_分区明细_${formatDate(new Date().toISOString())}.xls`;
-  downloadFile(html, filename, 'application/vnd.ms-excel');
+  downloadFile(html, `${taskName}_分区明细_${formatDate(new Date().toISOString())}.xls`, 'application/vnd.ms-excel');
   showToast(`📊 已导出 ${partitions.length} 个分区`);
 }
 
-// ============================================================
-// 详情页展示分区
-// ============================================================
+// ---- 详情页展示分区（动态列） ----
 
 function renderPartitionInDetail(record) {
+  migratePartitions(record);
   const partitions = record.partitions || [];
-  if (partitions.length === 0) return '';  // 没有分区数据不显示该区块
+  const columns = record.partitionColumns || [];
+  if (partitions.length === 0) return '';
 
-  const totalBefore = partitions.reduce((s, p) => s + (Number(p.beforeCount) || 0), 0);
-  const totalAfter = partitions.reduce((s, p) => s + (Number(p.afterCount) || 0), 0);
-  const { dupRate: avgRate } = calcDupStats(totalBefore, totalAfter);
+  const showTotalRate = columns.length >= 2;
+  let headers = ['分区名'];
+  if (columns.length > 0) {
+    headers.push(...columns.map(c => c.name));
+  } else {
+    headers.push('去重前', '去重后');
+  }
+  if (showTotalRate) headers.push('总去重率');
 
   const rows = partitions.map(p => {
-    const { dupCount, dupRate } = calcDupStats(p.beforeCount, p.afterCount);
-    return `<tr>
-      <td class="partition-name">${esc(p.partition || '-')}</td>
-      <td class="num-col">${p.beforeCount ? formatNum(p.beforeCount) : '-'}</td>
-      <td class="num-col">${p.afterCount ? formatNum(p.afterCount) : '-'}</td>
-      <td class="num-col">${dupCount !== '' ? formatNum(dupCount) : '-'}</td>
-      <td class="num-col"><span class="${getDupRateClass(Number(dupRate))}">${dupRate !== '' ? dupRate + '%' : '-'}</span></td>
-    </tr>`;
+    const values = p.values || {};
+    const { totalRate } = calcMultiStageRates(values, columns);
+    let cells = [`<td class="partition-name">${esc(p.partition || '-')}</td>`];
+    if (columns.length > 0) {
+      columns.forEach(c => {
+        cells.push(`<td class="num-col">${values[c.id] ? formatNum(values[c.id]) : '-'}</td>`);
+      });
+    }
+    if (showTotalRate) {
+      cells.push(`<td class="num-col"><span class="${getDupRateClass(Number(totalRate))}">${totalRate !== '' ? totalRate + '%' : '-'}</span></td>`);
+    }
+    return `<tr>${cells.join('')}</tr>`;
   }).join('');
+
+  // 汇总
+  let sumCells = ['<strong>汇总</strong>'];
+  if (columns.length > 0) {
+    columns.forEach(c => {
+      const total = partitions.reduce((s, p) => s + (Number((p.values || {})[c.id]) || 0), 0);
+      sumCells.push(`<strong>${formatNum(total)}</strong>`);
+    });
+  }
+  if (showTotalRate) {
+    const firstCol = columns[0], lastCol = columns[columns.length - 1];
+    const tF = partitions.reduce((s, p) => s + (Number((p.values || {})[firstCol.id]) || 0), 0);
+    const tL = partitions.reduce((s, p) => s + (Number((p.values || {})[lastCol.id]) || 0), 0);
+    const avgRate = tF > 0 ? ((tF - tL) / tF * 100).toFixed(2) : '0';
+    sumCells.push(`<strong class="${getDupRateClass(Number(avgRate))}">${avgRate}%</strong>`);
+  }
 
   return `
     <div class="detail-section detail-partition-section">
@@ -1478,27 +1676,19 @@ function renderPartitionInDetail(record) {
         📊 分区明细 (${partitions.length})
         <button class="btn btn-sm btn-secondary export-btn" onclick="exportSingleRecordPartitions('${record.id}')">📊 导出Excel</button>
       </h3>
+      <div style="overflow-x:auto;">
       <table class="detail-partition-table">
-        <thead><tr>
-          <th>分区名</th>
-          <th class="num-col">去重前</th>
-          <th class="num-col">去重后</th>
-          <th class="num-col">重复数量</th>
-          <th class="num-col">重复率</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
+        <thead><tr>${headers.map(h => `<th class="${h !== '分区名' ? 'num-col' : ''}">${esc(h)}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${rows}
+          <tr style="border-top:2px solid var(--border);">${sumCells.map((c, i) => `<td class="${i !== 0 ? 'num-col' : ''}">${c}</td>`).join('')}</tr>
+        </tbody>
       </table>
-      <div class="detail-partition-summary">
-        <span>分区数：<strong>${partitions.length}</strong></span>
-        <span>总去重前：<strong>${formatNum(totalBefore)}</strong></span>
-        <span>总去重后：<strong>${formatNum(totalAfter)}</strong></span>
-        <span>平均重复率：<strong class="${getDupRateClass(Number(avgRate))}">${avgRate}%</strong></span>
       </div>
     </div>
   `;
 }
 
-/** 从详情页导出单条记录的分区（临时切换 currentPartitionRecordId） */
 function exportSingleRecordPartitions(recordId) {
   const savedId = currentPartitionRecordId;
   currentPartitionRecordId = recordId;
@@ -1563,10 +1753,16 @@ if (records.length === 0) {
     sqlScript: 'DROP TABLE IF EXISTS merged_incremental_dedup;\nCREATE TABLE merged_incremental_dedup AS\nSELECT * FROM (\n  SELECT *, ROW_NUMBER() OVER(PARTITION BY url, content ORDER BY row_id) as rn\n  FROM merged_incremental\n) t WHERE rn = 1;',
     duration: '45',
     remark: '这是一条示例记录，展示各字段效果，可随时删除。',
+    partitionColumns: [
+      { id: "col_raw", name: "原始数量", rule: "", inputTable: "merged_incremental", outputTable: "" },
+      { id: "col_row", name: "行去重后", rule: "url, content", inputTable: "merged_incremental", outputTable: "merged_row_dedup" },
+      { id: "col_exact", name: "精确去重后", rule: "content_hash", inputTable: "merged_row_dedup", outputTable: "merged_exact_dedup" },
+      { id: "col_mh", name: "MinHash去重后", rule: "minhash(sim=0.8)", inputTable: "merged_exact_dedup", outputTable: "merged_mh_dedup" },
+    ],
     partitions: [
-      { partition: "di=20260519", beforeCount: "12000000", afterCount: "9800000" },
-      { partition: "di=20260601", beforeCount: "15000000", afterCount: "13000000" },
-      { partition: "di=20260709", beforeCount: "23000000", afterCount: "19200000" },
+      { partition: "di=20260519", values: { col_raw: "12000000", col_row: "11000000", col_exact: "9800000", col_mh: "8500000" } },
+      { partition: "di=20260601", values: { col_raw: "15000000", col_row: "13800000", col_exact: "13000000", col_mh: "11200000" } },
+      { partition: "di=20260709", values: { col_raw: "23000000", col_row: "21000000", col_exact: "19200000", col_mh: "16500000" } },
     ],
   });
   saveRecords();
