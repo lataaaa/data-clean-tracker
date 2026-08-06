@@ -1135,12 +1135,15 @@ function calcMultiStageRates(values, columns) {
   return { totalRate, stages };
 }
 
-/** 分区保存后自动同步到主记录，并刷新列表 */
+/** 分区保存后自动同步到主记录，并立即刷新主列表 */
 function savePartitionsAndSync() {
   if (currentPartitionRecordId) {
     syncPartitionsToMainRecord(currentPartitionRecordId);
   }
   saveRecords();
+  // 立即刷新主列表（不等关闭弹窗）
+  renderTable();
+  updateDatalists();
 }
 
 // ---- 打开/关闭分区管理 ----
