@@ -1151,6 +1151,9 @@ function openPartitionManager(recordId) {
   const r = records.find(x => x.id === recordId);
   if (r) migratePartitions(r);
   document.getElementById('partitionModalTitle').textContent = r ? r.taskName : '';
+  // 打开时同步一次分区数据到主记录
+  syncPartitionsToMainRecord(recordId);
+  saveRecords();
   switchPartitionMode('list');
   partitionSortField = 'partition';
   partitionSortAsc = true;
@@ -2047,6 +2050,16 @@ document.addEventListener('keydown', (e) => {
 // 初始化（异步加载数据）
 (async () => {
   await loadRecords();
+
+  // 初始化时同步所有记录的分区数据到主记录
+  records.forEach(r => {
+    if (r.partitionColumns && r.partitionColumns.length > 0) {
+      syncPartitionsToMainRecord(r.id);
+    }
+  });
+  if (records.some(r => r.partitionColumns && r.partitionColumns.length > 0)) {
+    saveRecords();
+  }
 
   // 如果后端数据为空，但 localStorage 有数据，自动迁移到后端
   if (records.length === 0 && HAS_BACKEND) {
