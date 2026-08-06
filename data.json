@@ -1,100 +1,5 @@
 [
   {
-    "id": "r_1785922172072_uv5bms",
-    "taskName": "示例：6月增量数据去重（可删除）",
-    "createdAt": "2026-08-05T09:29:32.072Z",
-    "operator": "示例",
-    "status": "已完成",
-    "beforeTable": "merged_incremental",
-    "beforeCount": "50000000",
-    "beforeSources": [
-      "glm_data.cdl.cdl_facebook_posts_di",
-      "glm_data.cdl.cdl_zhihu_question_answer_di",
-      "glm_data.cdl.cdl_csdn_details_di"
-    ],
-    "afterTable": "merged_incremental_dedup",
-    "afterCount": "42000000",
-    "dedupRules": "url, content",
-    "dataRange": "di='20260519' ~ '20260709'",
-    "ossTable": "oss://glm-data/dedup/merged_202607/",
-    "sqlScript": "DROP TABLE IF EXISTS merged_incremental_dedup;\nCREATE TABLE merged_incremental_dedup AS\nSELECT * FROM (\n  SELECT *, ROW_NUMBER() OVER(PARTITION BY url, content ORDER BY row_id) as rn\n  FROM merged_incremental\n) t WHERE rn = 1;",
-    "duration": "45",
-    "remark": "这是一条示例记录，展示各字段效果，可随时删除。",
-    "partitionColumns": [
-      {
-        "id": "col_raw",
-        "name": "原始数量",
-        "rule": "",
-        "inputTable": "merged_incremental",
-        "outputTable": ""
-      },
-      {
-        "id": "col_row",
-        "name": "行去重后",
-        "rule": "url, content",
-        "inputTable": "merged_incremental",
-        "outputTable": "merged_row_dedup"
-      },
-      {
-        "id": "col_exact",
-        "name": "精确去重后",
-        "rule": "content_hash",
-        "inputTable": "merged_row_dedup",
-        "outputTable": "merged_exact_dedup"
-      },
-      {
-        "id": "col_mh",
-        "name": "MinHash去重后",
-        "rule": "minhash(sim=0.8)",
-        "inputTable": "merged_exact_dedup",
-        "outputTable": "merged_mh_dedup"
-      }
-    ],
-    "partitions": [
-      {
-        "partition": "di=20260519",
-        "values": {
-          "col_raw": "12000000",
-          "col_row": "11000000",
-          "col_exact": "9800000",
-          "col_mh": "8500000"
-        }
-      },
-      {
-        "partition": "di=20260601",
-        "values": {
-          "col_raw": "15000000",
-          "col_row": "13800000",
-          "col_exact": "13000000",
-          "col_mh": "11200000"
-        }
-      },
-      {
-        "partition": "di=20260709",
-        "values": {
-          "col_raw": "23000000",
-          "col_row": "21000000",
-          "col_exact": "19200000",
-          "col_mh": "16500000"
-        }
-      }
-    ],
-    "dedupColumns": [
-      {
-        "id": "d_mig_1",
-        "name": "去重前数量"
-      },
-      {
-        "id": "d_mig_2",
-        "name": "去重后数量"
-      }
-    ],
-    "dedupValues": {
-      "d_mig_1": "50000000",
-      "d_mig_2": "42000000"
-    }
-  },
-  {
     "id": "r_1785922710345_zvxzvl",
     "taskName": "20260727多语言数据去重",
     "createdAt": "2026-08-05T09:38:30.345Z",
@@ -104,46 +9,40 @@
     "beforeSources": [
       "cc+wayback+glm_clawl"
     ],
-    "afterTable": "20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_t200_minhash",
+    "afterTable": "- glm_data.cdl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup_t200",
     "dedupColumns": [
       {
-        "id": "d_1785924409965_8cfv",
+        "id": "d_1785988577307_0kt2",
         "name": "去重前数量",
         "tableName": "glm_data.cdl.20260727_15majorlang_haruka_justext_113_content"
       },
       {
-        "id": "d_1785924409965_rbj6",
-        "name": "精确去重后数量",
+        "id": "d_1785988577308_abve",
+        "name": "精确去重+50filter后数量",
         "tableName": ""
       },
       {
-        "id": "d_1785924409965_2ub6",
-        "name": "50filter后数量",
-        "tableName": ""
-      },
-      {
-        "id": "d_1785924409965_kf34",
+        "id": "d_1785988577308_pm9e",
         "name": "MinHash去重后数量",
         "tableName": "glm_data.ddl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations"
       },
       {
-        "id": "d_1785924447800_ju2b",
-        "name": "行去重+200ngram去重",
-        "tableName": "glm_data.ddl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_t200"
+        "id": "d_1785988577308_ts98",
+        "name": "red_line去重",
+        "tableName": "- glm_data.cdl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup"
       },
       {
-        "id": "d_1785924471272_zwui",
-        "name": "第二次去重",
-        "tableName": "20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_t200_minhash"
+        "id": "d_1785988577308_qq2z",
+        "name": "200-gram去重",
+        "tableName": "- glm_data.cdl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup_t200"
       }
     ],
     "dedupValues": {
-      "d_1785924409965_8cfv": "412802575869",
-      "d_1785924409965_rbj6": "191727248265",
-      "d_1785924409965_2ub6": "187946465042",
-      "d_1785924409965_kf34": "80831138963",
-      "d_1785924447800_ju2b": "80831138960",
-      "d_1785924471272_zwui": "80831138960"
+      "d_1785988577307_0kt2": "412802575869",
+      "d_1785988577308_abve": "187946465042",
+      "d_1785988577308_pm9e": "80831138963",
+      "d_1785988577308_ts98": "80831138963",
+      "d_1785988577308_qq2z": "69960952191"
     },
     "dataRange": "cc cc_2013_20～ cc_2026_25 wayback 现有全量0816和1024 glmcrawl202409_en glmcrawl202409_math glmcrawl202409_zh glmcrawl cn 20241230~20260709 glmcrawl other 20250110~20260709",
     "ossTable": "暂无",
@@ -155,161 +54,207 @@
         "partition": "lang=vie_Latn",
         "values": {
           "col_mh": "2939500888",
-          "col_raw": "12120300024"
+          "col_raw": "12120300024",
+          "col_1785988075283_kadt": "2939500888",
+          "col_1785988107974_mwh8": "2570195327"
         }
       },
       {
         "partition": "lang=tur_Latn",
         "values": {
           "col_mh": "2546140927",
-          "col_raw": "12981559672"
+          "col_raw": "12981559672",
+          "col_1785988075283_kadt": "2546140927",
+          "col_1785988107974_mwh8": "2284377706"
         }
       },
       {
         "partition": "lang=swe_Latn",
         "values": {
           "col_mh": "1380293851",
-          "col_raw": "6290649218"
+          "col_raw": "6290649218",
+          "col_1785988075283_kadt": "1380293851",
+          "col_1785988107974_mwh8": "1257932064"
         }
       },
       {
         "partition": "lang=spa_Latn",
         "values": {
           "col_mh": "7184396143",
-          "col_raw": "38742952008"
+          "col_raw": "38742952008",
+          "col_1785988075283_kadt": "7184396143",
+          "col_1785988107974_mwh8": "6479417300"
         }
       },
       {
         "partition": "lang=rus_Cyrl",
         "values": {
           "col_mh": "15072147426",
-          "col_raw": "81355115230"
+          "col_raw": "81355115230",
+          "col_1785988075283_kadt": "15072147426",
+          "col_1785988107974_mwh8": "13262526792"
         }
       },
       {
         "partition": "lang=por_Latn",
         "values": {
           "col_mh": "5037211642",
-          "col_raw": "26864312062"
+          "col_raw": "26864312062",
+          "col_1785988075283_kadt": "5037211642",
+          "col_1785988107974_mwh8": "4459459750"
         }
       },
       {
         "partition": "lang=pol_Latn",
         "values": {
           "col_mh": "3359893276",
-          "col_raw": "20827346306"
+          "col_raw": "20827346306",
+          "col_1785988075283_kadt": "3359893276",
+          "col_1785988107974_mwh8": "2897471577"
         }
       },
       {
         "partition": "lang=nld_Latn",
         "values": {
           "col_mh": "2666485893",
-          "col_raw": "15558800888"
+          "col_raw": "15558800888",
+          "col_1785988075283_kadt": "2666485893",
+          "col_1785988107974_mwh8": "2364794263"
         }
       },
       {
         "partition": "lang=kor_Hang",
         "values": {
           "col_mh": "3178599404",
-          "col_raw": "16140203918"
+          "col_raw": "16140203918",
+          "col_1785988075283_kadt": "3178599404",
+          "col_1785988107974_mwh8": "2738601381"
         }
       },
       {
         "partition": "lang=jpn_Jpan",
         "values": {
           "col_mh": "13150561253",
-          "col_raw": "48857873851"
+          "col_raw": "48857873851",
+          "col_1785988075283_kadt": "13150561253",
+          "col_1785988107974_mwh8": "11862423992"
         }
       },
       {
         "partition": "lang=ita_Latn",
         "values": {
           "col_mh": "3531550556",
-          "col_raw": "18711660887"
+          "col_raw": "18711660887",
+          "col_1785988075283_kadt": "3531550556",
+          "col_1785988107974_mwh8": "3186466630"
         }
       },
       {
         "partition": "lang=fra_Latn",
         "values": {
           "col_mh": "6231467490",
-          "col_raw": "34940155548"
+          "col_raw": "34940155548",
+          "col_1785988075283_kadt": "6231467490",
+          "col_1785988107974_mwh8": "5641962765"
         }
       },
       {
         "partition": "lang=deu_Latn",
         "values": {
           "col_mh": "10264697502",
-          "col_raw": "57880538530"
+          "col_raw": "57880538530",
+          "col_1785988075283_kadt": "10264697502",
+          "col_1785988107974_mwh8": "7171847482"
         }
       },
       {
         "partition": "lang=ces_Latn",
         "values": {
           "col_mh": "1696831201",
-          "col_raw": "11595972718"
+          "col_raw": "11595972718",
+          "col_1785988075283_kadt": "1696831201",
+          "col_1785988107974_mwh8": "1465252982"
         }
       },
       {
         "partition": "lang=arz_Arab",
         "values": {
           "col_mh": "504865920",
-          "col_raw": "1885297982"
+          "col_raw": "1885297982",
+          "col_1785988075283_kadt": "504865920",
+          "col_1785988107974_mwh8": "444677376"
         }
       },
       {
         "partition": "lang=ary_Arab",
         "values": {
           "col_mh": "94532726",
-          "col_raw": "342107888"
+          "col_raw": "342107888",
+          "col_1785988075283_kadt": "94532726",
+          "col_1785988107974_mwh8": "86392713"
         }
       },
       {
         "partition": "lang=ars_Arab",
         "values": {
           "col_mh": "153256837",
-          "col_raw": "517520401"
+          "col_raw": "517520401",
+          "col_1785988075283_kadt": "153256837",
+          "col_1785988107974_mwh8": "139119127"
         }
       },
       {
         "partition": "lang=arb_Arab",
         "values": {
           "col_mh": "1766660342",
-          "col_raw": "6863590863"
+          "col_raw": "6863590863",
+          "col_1785988075283_kadt": "1766660342",
+          "col_1785988107974_mwh8": "1583918253"
         }
       },
       {
         "partition": "lang=apc_Arab",
         "values": {
           "col_mh": "32062824",
-          "col_raw": "126818151"
+          "col_raw": "126818151",
+          "col_1785988075283_kadt": "32062824",
+          "col_1785988107974_mwh8": "28707315"
         }
       },
       {
         "partition": "lang=ajp_Arab",
         "values": {
           "col_mh": "13689780",
-          "col_raw": "88672342"
+          "col_raw": "88672342",
+          "col_1785988075283_kadt": "13689780",
+          "col_1785988107974_mwh8": "12410265"
         }
       },
       {
         "partition": "lang=aeb_Arab",
         "values": {
           "col_mh": "22848423",
-          "col_raw": "96471163"
+          "col_raw": "96471163",
+          "col_1785988075283_kadt": "22848423",
+          "col_1785988107974_mwh8": "19817330"
         }
       },
       {
         "partition": "lang=acq_Arab",
         "values": {
           "col_mh": "423532",
-          "col_raw": "1798063"
+          "col_raw": "1798063",
+          "col_1785988075283_kadt": "423532",
+          "col_1785988107974_mwh8": "381182"
         }
       },
       {
         "partition": "lang=acm_Arab",
         "values": {
           "col_mh": "3021127",
-          "col_raw": "12858156"
+          "col_raw": "12858156",
+          "col_1785988075283_kadt": "3021127",
+          "col_1785988107974_mwh8": "2798619"
         }
       }
     ],
@@ -327,6 +272,18 @@
         "rule": "minhash(sim=0.8)",
         "inputTable": "merged_exact_dedup",
         "outputTable": "merged_mh_dedup"
+      },
+      {
+        "id": "col_1785988075283_kadt",
+        "name": "red_line去重",
+        "rule": "",
+        "inputTable": "20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup"
+      },
+      {
+        "id": "col_1785988107974_mwh8",
+        "name": "200-gram去重",
+        "rule": "",
+        "inputTable": "glm_data.cdl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup_t200"
       }
     ]
   }

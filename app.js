@@ -1153,7 +1153,69 @@ function openPartitionManager(recordId) {
   document.getElementById('partitionModal').style.display = 'flex';
 }
 
+/**
+ * 将分区的列定义和数据汇总同步到主记录的 dedupColumns/dedupValues
+ * 规则：
+ * - 分区的列 → 主记录的同名列更新数量（用各分区该列的总和）
+ * - 主记录有但分区没有的列（手动列如"精确去重后数量"）→ 保持不变
+ * - 列顺序：分区列在前，主记录独有的列在后
+ */
+function syncPartitionsToMainRecord(recordId) {
+  const r = records.find(x => x.id === recordId);
+  if (!r) return;
+  migrateRecordDedupColumns(r);
+
+  const partColumns = r.partitionColumns || [];
+  const partitions = r.partitions || [];
+  const mainCols = r.dedupColumns || [];
+  const mainVals = r.dedupValues || {};
+
+  if (partColumns.length === 0) return; // 没有分区列，不同步
+
+  // 计算每个分区列的总和
+  const partSums = {};
+  partColumns.forEach(c => {
+    partSums[c.id] = partitions.reduce((s, p) => s + (Number((p.values || {})[c.id]) || 0), 0);
+  });
+
+  // 找出主记录中有但分区中没有的列（按列名匹配）
+  const partColNames = new Set(partColumns.map(c => c.name));
+  const mainOnlyCols = mainCols.filter(c => !partColNames.has(c.name));
+
+  // 构建新的 dedupColumns：分区列在前 + 主记录独有列在后
+  const newDedupColumns = [];
+  const newDedupValues = {};
+
+  // 分区列（用表名和总和）
+  partColumns.forEach(pc => {
+    const colId = pc.id;
+    newDedupColumns.push({
+      id: colId,
+      name: pc.name,
+      tableName: pc.inputTable || '',
+    });
+    // 数量取分区总和
+    const sum = partSums[colId];
+    newDedupValues[colId] = sum > 0 ? String(sum) : '';
+  });
+
+  // 主记录独有的列（保持原值）
+  mainOnlyCols.forEach(mc => {
+    newDedupColumns.push(mc);
+    newDedupValues[mc.id] = mainVals[mc.id] || '';
+  });
+
+  // 只有当列结构或数据确实变化时才更新
+  r.dedupColumns = newDedupColumns;
+  r.dedupValues = newDedupValues;
+}
+
 function closePartitionManager() {
+  // 关闭时同步分区数据到主记录
+  if (currentPartitionRecordId) {
+    syncPartitionsToMainRecord(currentPartitionRecordId);
+    saveRecords();
+  }
   document.getElementById('partitionModal').style.display = 'none';
   currentPartitionRecordId = null;
   refreshAll();
@@ -1955,11 +2017,14 @@ function exportSingleRecordPartitions(recordId) {
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
-      overlay.style.display = 'none';
-      // 关闭分区管理时刷新列表
-      if (overlay.id === 'partitionModal') {
+      // 点击遮罩关闭分区管理时也同步数据
+      if (overlay.id === 'partitionModal' && currentPartitionRecordId) {
+        syncPartitionsToMainRecord(currentPartitionRecordId);
+        saveRecords();
         currentPartitionRecordId = null;
         refreshAll();
+      } else {
+        overlay.style.display = 'none';
       }
     }
   });
