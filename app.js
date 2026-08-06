@@ -1135,6 +1135,15 @@ function calcMultiStageRates(values, columns) {
   return { totalRate, stages };
 }
 
+/** 分区保存后自动同步到主记录 */
+function savePartitionsAndSync() {
+  saveRecords();
+  if (currentPartitionRecordId) {
+    syncPartitionsToMainRecord(currentPartitionRecordId);
+    saveRecords();
+  }
+}
+
 // ---- 打开/关闭分区管理 ----
 
 function openPartitionManager(recordId) {
@@ -1156,7 +1165,8 @@ function openPartitionManager(recordId) {
 /**
  * 将分区的列定义和数据汇总同步到主记录的 dedupColumns/dedupValues
  * 规则：
- * - 分区的列 → 主记录的同名列更新数量（用各分区该列的总和）
+ * - 分区的列 → 主记录按列名匹配，同名的更新数量（用各分区该列的总和）
+ * - 分区新增的列 → 自动添加到主记录
  * - 主记录有但分区没有的列（手动列如"精确去重后数量"）→ 保持不变
  * - 列顺序：分区列在前，主记录独有的列在后
  */
@@ -1170,7 +1180,7 @@ function syncPartitionsToMainRecord(recordId) {
   const mainCols = r.dedupColumns || [];
   const mainVals = r.dedupValues || {};
 
-  if (partColumns.length === 0) return; // 没有分区列，不同步
+  if (partColumns.length === 0) return;
 
   // 计算每个分区列的总和
   const partSums = {};
@@ -1188,15 +1198,13 @@ function syncPartitionsToMainRecord(recordId) {
 
   // 分区列（用表名和总和）
   partColumns.forEach(pc => {
-    const colId = pc.id;
     newDedupColumns.push({
-      id: colId,
+      id: pc.id,
       name: pc.name,
       tableName: pc.inputTable || '',
     });
-    // 数量取分区总和
-    const sum = partSums[colId];
-    newDedupValues[colId] = sum > 0 ? String(sum) : '';
+    const sum = partSums[pc.id];
+    newDedupValues[pc.id] = sum > 0 ? String(sum) : '';
   });
 
   // 主记录独有的列（保持原值）
@@ -1205,7 +1213,6 @@ function syncPartitionsToMainRecord(recordId) {
     newDedupValues[mc.id] = mainVals[mc.id] || '';
   });
 
-  // 只有当列结构或数据确实变化时才更新
   r.dedupColumns = newDedupColumns;
   r.dedupValues = newDedupValues;
 }
@@ -1315,7 +1322,7 @@ function saveColumnFromEditor() {
     });
   }
 
-  saveRecords();
+  savePartitionsAndSync();
   closeColumnEditor();
   renderColumnManager();
   updatePasteColumnOptions();
@@ -1338,7 +1345,7 @@ function deleteColumn(index) {
     partitions.forEach(p => {
       if (p.values) delete p.values[col.id];
     });
-    saveRecords();
+    savePartitionsAndSync();
     renderColumnManager();
     updatePasteColumnOptions();
     renderPartitionTable();
@@ -1352,7 +1359,7 @@ function moveColumn(index, direction) {
   const newIndex = index + direction;
   if (newIndex < 0 || newIndex >= columns.length) return;
   [columns[index], columns[newIndex]] = [columns[newIndex], columns[index]];
-  saveRecords();
+  savePartitionsAndSync();
   renderColumnManager();
   renderPartitionTable();
 }
@@ -1549,7 +1556,7 @@ function executeBatchDelete() {
   const partitions = getPartitions(currentPartitionRecordId);
   const sortedIndexes = [...selectedPartitionIndexes].sort((a, b) => b - a);
   sortedIndexes.forEach(i => partitions.splice(i, 1));
-  saveRecords();
+  savePartitionsAndSync();
   selectedPartitionIndexes.clear();
   cancelBatchDelete();
   renderPartitionTable();
@@ -1636,7 +1643,7 @@ function savePartitionFromEditor() {
     partitions.push(partitionData);
   }
 
-  saveRecords();
+  savePartitionsAndSync();
   closePartitionEditor();
   renderPartitionTable();
   showToast(index >= 0 ? '✅ 分区已更新' : '✅ 分区已添加');
@@ -1797,7 +1804,7 @@ function parseAndImportPartitions() {
     }
   }
 
-  saveRecords();
+  savePartitionsAndSync();
   renderPartitionTable();
   document.getElementById('partitionPasteArea').value = '';
 
