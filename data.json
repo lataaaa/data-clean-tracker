@@ -12,9 +12,9 @@
     "afterTable": "",
     "dedupColumns": [
       {
-        "id": "d_1785989448770_sxo1",
-        "name": "去重前数量",
-        "tableName": "glm_data.cdl.20260727_15majorlang_haruka_justext_113_content"
+        "id": "col_raw",
+        "name": "原始数量",
+        "tableName": "merged_incremental"
       },
       {
         "id": "d_1785989448770_zipc",
@@ -22,33 +22,33 @@
         "tableName": ""
       },
       {
-        "id": "d_1785989448771_lfyx",
-        "name": "MinHash去重后数量",
-        "tableName": "glm_data.ddl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations"
+        "id": "col_mh",
+        "name": "MinHash去重后",
+        "tableName": "merged_exact_dedup"
       },
       {
-        "id": "d_1785989448771_8rma",
+        "id": "col_1785988075283_kadt",
         "name": "red_line去重",
-        "tableName": "- glm_data.cdl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup"
+        "tableName": "20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup"
       },
       {
-        "id": "d_1785989448771_aela",
+        "id": "col_1785988107974_mwh8",
         "name": "200-gram去重",
-        "tableName": "- glm_data.cdl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup_t200"
+        "tableName": "glm_data.cdl.20260727_15majorlang_haruka_justext_113_content_dedup_minhash_dedup_normalizations_red_line_dedup_t200"
       },
       {
-        "id": "d_1785989455359_lcgh",
+        "id": "col_1785989395403_ph0e",
         "name": "第二次去重后数量",
         "tableName": ""
       }
     ],
     "dedupValues": {
-      "d_1785989448770_sxo1": "412802575869",
-      "d_1785989448770_zipc": "187946465042",
-      "d_1785989448771_lfyx": "80831138963",
-      "d_1785989448771_8rma": "80831138963",
-      "d_1785989448771_aela": "69960952191",
-      "d_1785989455359_lcgh": ""
+      "col_raw": "412802575869",
+      "col_mh": "80831138963",
+      "col_1785988075283_kadt": "80831138963",
+      "col_1785988107974_mwh8": "69960952191",
+      "col_1785989395403_ph0e": "1111",
+      "d_1785989448770_zipc": "187946465042"
     },
     "dataRange": "cc cc_2013_20～ cc_2026_25 wayback 现有全量0816和1024 glmcrawl202409_en glmcrawl202409_math glmcrawl202409_zh glmcrawl cn 20241230~20260709 glmcrawl other 20250110~20260709",
     "ossTable": "暂无",

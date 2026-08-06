@@ -1169,9 +1169,9 @@ function openPartitionManager(recordId) {
  * 将分区的列定义和数据汇总同步到主记录的 dedupColumns/dedupValues
  * 规则：
  * - 分区的列 → 主记录按列名匹配，同名的更新数量（用各分区该列的总和）
- * - 分区新增的列 → 自动添加到主记录
- * - 主记录有但分区没有的列（手动列如"精确去重后数量"）→ 保持不变
- * - 列顺序：分区列在前，主记录独有的列在后
+ * - 分区新增的列 → 追加到主记录末尾
+ * - 主记录有但分区没有的列（手动列如"精确去重+50filter后数量"）→ 保持原值和位置
+ * - 列顺序：保持主记录原有顺序，分区新增列追加到最后
  */
 function syncPartitionsToMainRecord(recordId) {
   const r = records.find(x => x.id === recordId);
@@ -1191,29 +1191,47 @@ function syncPartitionsToMainRecord(recordId) {
     partSums[c.id] = partitions.reduce((s, p) => s + (Number((p.values || {})[c.id]) || 0), 0);
   });
 
-  // 找出主记录中有但分区中没有的列（按列名匹配）
-  const partColNames = new Set(partColumns.map(c => c.name));
-  const mainOnlyCols = mainCols.filter(c => !partColNames.has(c.name));
+  // 分区列名 → 分区列定义 的映射
+  const partColByName = {};
+  partColumns.forEach(c => { partColByName[c.name] = c; });
 
-  // 构建新的 dedupColumns：分区列在前 + 主记录独有列在后
+  // 构建新的列：保持主记录原有顺序
   const newDedupColumns = [];
   const newDedupValues = {};
+  const usedPartColNames = new Set();
 
-  // 分区列（用表名和总和）
-  partColumns.forEach(pc => {
-    newDedupColumns.push({
-      id: pc.id,
-      name: pc.name,
-      tableName: pc.inputTable || '',
-    });
-    const sum = partSums[pc.id];
-    newDedupValues[pc.id] = sum > 0 ? String(sum) : '';
+  // 先遍历主记录原有列，保持位置不变
+  mainCols.forEach(mc => {
+    if (partColByName[mc.name]) {
+      // 该列在分区里也有 → 用分区的 id、表名、总和
+      const pc = partColByName[mc.name];
+      newDedupColumns.push({
+        id: pc.id,
+        name: pc.name,
+        tableName: pc.inputTable || '',
+      });
+      const sum = partSums[pc.id];
+      newDedupValues[pc.id] = sum > 0 ? String(sum) : '';
+      usedPartColNames.add(pc.name);
+    } else {
+      // 该列分区里没有 → 保持原值
+      newDedupColumns.push(mc);
+      newDedupValues[mc.id] = mainVals[mc.id] || '';
+    }
   });
 
-  // 主记录独有的列（保持原值）
-  mainOnlyCols.forEach(mc => {
-    newDedupColumns.push(mc);
-    newDedupValues[mc.id] = mainVals[mc.id] || '';
+  // 再追加分区新增的列（主记录原来没有的）
+  partColumns.forEach(pc => {
+    if (!usedPartColNames.has(pc.name)) {
+      newDedupColumns.push({
+        id: pc.id,
+        name: pc.name,
+        tableName: pc.inputTable || '',
+      });
+      const sum = partSums[pc.id];
+      newDedupValues[pc.id] = sum > 0 ? String(sum) : '';
+      usedPartColNames.add(pc.name);
+    }
   });
 
   r.dedupColumns = newDedupColumns;
